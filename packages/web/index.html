@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+
+    <meta property="og:title" content="PÅLÄGG" />
+    <meta property="og:type" content="website" />
+    <meta
+      name="description"
+      content="wedraw에서 나만의 토핑 파츠를 설계해 보세요."
+    />
+    <meta
+      property="og:description"
+      content="나만의 새로운 토핑 파츠를 만들어보세요, 토핑 메이커."
+    />
+
+    <meta property="og:url" content="https://palagg.vercel.app" />
+    <meta property="og:image" content="/palagg.png" />
+
+    <!-- Pretendard Variable (한글) -->
+    <link
+      rel="stylesheet"
+      as="style"
+      crossorigin
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css"
+    />
+    <!-- Inter (영문·숫자) -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700&display=swap"
+      rel="stylesheet"
+    />
+
+    <title>PÅLÄGG | 토핑 메이커</title>
+  </head>
+  <body>
+    <header>
+      <h1 class="brand-title">PÅLÄGG</h1>
+    </header>
+    <main>
+      <section id="generator">
+        <h2 class="hidden">토핑 파츠 생성기</h2>
+        <div id="part">
+          <div id="canvas-container">
+            <canvas aria-label="생성된 토핑 파츠의 3D 미리보기">
+              토핑 파츠의 3D 미리보기입니다. JavaScript를 활성화해야 볼 수 있습니다.</canvas
+            >
+          </div>
+        </div>
+        <div id="panel">
+          <div id="controls" role="group" aria-label="파츠 치수 설정"></div>
+          <div class="action-buttons">
+            <a id="download">3MF 다운로드</a>
+            <button id="print-now" type="button">Print Now</button>
+          </div>
+          <div id="job-status" class="job-status" hidden></div>
+        </div>
+      </section>
+      <section id="about">
+        <h2 class="hidden">소개</h2>
+
+        <section>
+          <h3>사용 방법</h3>
+          <p>
+            토핑 파츠 메이커는 IKEA SKÅDIS 페그보드 같은 스테디셀러
+            제품에 토핑처럼 추가할 수 있는 커스텀 아이템을 손쉽게
+            만드는 도구입니다. 형상을 선택하고 폭·깊이·높이를 설정한
+            뒤 3MF 파일을 다운로드해 슬라이서에서 바로 사용하세요.
+            서포트 없이, 레이어 높이
+            0.2&nbsp;—&nbsp;0.4mm로 출력하세요.
+          </p>
+        </section>
+
+        <section>
+          <h3>기술 구성</h3>
+          <p>
+            토핑 파츠 메이커는 클라이언트 사이드 웹 애플리케이션입니다.
+            3D 모델은
+            <a
+              target="_blank"
+              rel="noopener noreferrer"
+              href="https://github.com/elalish/manifold"
+              >manifold</a
+            >(WebAssembly)로 브라우저에서 직접 생성되며,
+            <a
+              target="_blank"
+              rel="noopener noreferrer"
+              href="https://threejs.org/"
+              >Three.js</a
+            >
+            기반 커스텀 렌더링 파이프라인으로 시각화됩니다.
+          </p>
+        </section>
+
+        <section>
+          <h3>wedraw</h3>
+          <p>
+            wedraw(위드로우)는 "제조를 간단하게"라는 미션 아래
+            온라인에서 셀프인테리어와 DIY를 위한 다양한 서비스를
+            운영하고 있습니다. 제조 인프라에 쉽게 접근할 수 있는
+            다양한 웹 서비스를 제공하고 있으며, 토핑 파츠 메이커도
+            그중 하나입니다.
+            <a
+              target="_blank"
+              rel="noopener noreferrer"
+              href="https://wedraw.kr"
+              >wedraw.kr</a
+            >에서 더 많은 서비스를 만나보세요.
+          </p>
+        </section>
+      </section>
+    </main>
+    <footer>
+      <ul>
+        <li>
+          <a
+            href="https://wedraw.kr"
+            target="_blank"
+            rel="noopener noreferrer"
+            >wedraw.kr</a
+          >
+        </li>
+        <li>
+        
+        </li>
+      </ul>
+    </footer>
+    <a
+      class="wedraw-corner"
+      href="https://wedraw.kr"
+      target="_blank"
+      rel="noopener noreferrer"
+      aria-label="wedraw"
+    >
+      <img src="/wedraw_logo.png" alt="wedraw" class="wedraw-corner-logo" />
+    </a>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

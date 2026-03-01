@@ -1,0 +1,10 @@
+{
+  "name": "palagg",
+  "private": true,
+  "version": "0.0.0",
+  "workspaces": [
+    "packages/shared",
+    "packages/web",
+    "packages/server"
+  ]
+}
