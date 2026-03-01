@@ -407,6 +407,7 @@ footer ul {
 @media (hover: none) {
   .range-input-wrapper {
     --thumb-height: 2em;
+    --track-height: 0.5em;
   }
 }
 
