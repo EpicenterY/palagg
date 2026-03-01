@@ -36,8 +36,8 @@ export async function uploadToCloud(localPath: string): Promise<CloudUploadResul
 
   console.log(`[CloudUpload] Uploaded ${filename} (${fileSize} bytes, md5: ${md5})`);
 
-  // Step 3: Notify Bambu Cloud that upload is complete
-  await notifyUploadComplete(uploadTicket);
+  // Step 3: Notify Bambu Cloud that upload is complete (PUT + poll GET)
+  await notifyUploadComplete(uploadTicket, filename);
 
   // Step 4: Patch the project to associate the uploaded file
   await patchProject(projectId, modelId, profileId);

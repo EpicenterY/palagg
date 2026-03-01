@@ -229,23 +229,63 @@ export async function createTask(params: {
 
 /**
  * Notify Bambu Cloud that an upload is complete.
- * The ticket format uses underscores from API, but the notification key uses colons.
+ * Uses PUT with { upload: { origin_file_name, ticket } } body format.
+ * The ticket format uses underscores from API, notification key uses colons.
  */
-export async function notifyUploadComplete(uploadTicket: string): Promise<void> {
+export async function notifyUploadComplete(uploadTicket: string, filename: string): Promise<void> {
   const token = await ensureAuth();
-  // The notification key uses colons as separators
   const notificationKey = uploadTicket.replace(/_/g, ":");
-  const res = await fetch(
-    `${API}/v1/iot-service/api/user/notification?action=upload&ticket=${encodeURIComponent(notificationKey)}`,
-    { headers: { Authorization: `Bearer ${token}` } },
-  );
 
-  if (!res.ok) {
-    const text = await res.text();
-    console.warn(`[CloudAuth] Upload notification failed (${res.status}): ${text}`);
-  } else {
-    console.log(`[CloudAuth] Upload notification succeeded`);
+  // Step 1: PUT notification to signal upload is complete
+  const putRes = await fetch(`${API}/v1/iot-service/api/user/notification`, {
+    method: "PUT",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      upload: {
+        origin_file_name: filename,
+        ticket: notificationKey,
+      },
+    }),
+  });
+
+  if (!putRes.ok) {
+    const text = await putRes.text();
+    throw new Error(`Upload notification PUT failed (${putRes.status}): ${text}`);
   }
+  console.log(`[CloudAuth] Upload notification PUT succeeded`);
+
+  // Step 2: Poll GET notification until server finishes processing the 3MF
+  const maxPolls = 30;
+  for (let i = 0; i < maxPolls; i++) {
+    const getRes = await fetch(
+      `${API}/v1/iot-service/api/user/notification?action=upload&ticket=${encodeURIComponent(notificationKey)}`,
+      { headers: { Authorization: `Bearer ${token}` } },
+    );
+
+    if (getRes.ok) {
+      const data = await getRes.json() as { message?: string };
+      console.log(`[CloudAuth] Notification poll ${i + 1}: ${data.message}`);
+      if (data.message === "success") {
+        console.log(`[CloudAuth] Server finished processing upload`);
+        return;
+      }
+      // "running" means still processing, continue polling
+    } else {
+      const text = await getRes.text();
+      console.warn(`[CloudAuth] Notification poll ${i + 1} failed (${getRes.status}): ${text}`);
+      // If server says "Unzip 3mf exception", the file is invalid
+      if (text.includes("Unzip 3mf exception")) {
+        throw new Error("Server failed to process 3MF file (unzip exception)");
+      }
+    }
+
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+
+  console.warn(`[CloudAuth] Notification polling timed out after ${maxPolls} attempts`);
 }
 
 /**

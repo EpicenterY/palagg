@@ -140,3 +140,96 @@ UI 코드 수정 후에는 반드시:
 3. 레이아웃 오류, 깨진 UI, 콘솔 에러 분석 후 수정
 4. 정상 결과 나올 때까지 수정 → 스크린샷 → 분석 반복
 5. 최종 스크린샷을 사용자에게 보여주고 마무리
+
+---
+
+## 프린트 파이프라인 (packages/server)
+
+### 개요
+
+웹에서 설계한 3MF를 Bambu Lab X1C 프린터로 출력하는 자동화 파이프라인.
+작업 상태: `pending_slice → slicing → pending_upload → uploading → pending_print → printing`
+
+### 핵심 파일
+
+| 파일 | 역할 |
+|------|------|
+| `services/job-orchestrator.ts` | 1초 간격 tick — 슬라이스 → 업로드 → 프린트 순차 처리 |
+| `services/slicer.ts` | BambuStudio CLI로 3MF 슬라이싱 |
+| `services/printer-upload.ts` | LAN: FTPS / Cloud: S3 업로드 분기 |
+| `services/cloud-upload.ts` | Cloud 업로드 (S3 PUT + 알림 + 패치) |
+| `services/bambu-cloud-auth.ts` | Cloud API 인증, 프로젝트/태스크 생성, 알림 |
+| `services/printer-mqtt.ts` | MQTT 연결, 상태 수신, 프린트 명령 전송 |
+| `config.ts` | 환경변수 (CONNECTION_MODE, 토큰, 프린터 정보) |
+
+### 연결 모드 (CONNECTION_MODE)
+
+#### Cloud 모드 (`cloud`) — 현재 구현됨, 제한 있음
+
+```
+슬라이싱 → createProject() → S3 PUT → notifyUploadComplete()
+→ patchProject() → createTask() → MQTT project_file 명령
+```
+
+**구현 완료 (정상 작동):**
+- `createProject()` — 프로젝트 생성, S3 pre-signed URL + ticket 반환
+- S3 PUT 업로드 — 슬라이싱된 3MF 파일 업로드
+- `notifyUploadComplete()` — PUT 알림 + GET 폴링 (running → success)
+- `patchProject()` — 모델-프로젝트 연결
+
+**PUT notification 올바른 포맷:**
+```json
+{
+  "upload": {
+    "origin_file_name": "filename.3mf",
+    "ticket": "uploader:uid:modelId:profileId:timestamp"
+  }
+}
+```
+- ticket은 project 응답의 `upload_ticket`에서 `_`를 `:`로 치환
+- GET 폴링: 2초 간격, 최대 30회, `message: "success"` 까지 대기
+
+**근본적 제한 (해결 불가):**
+1. **Task API 거부** — API로 업로드한 모델은 `POST /v1/user-service/my/task`에서 빈 400 반환. BambuStudio의 비공개 `bambu_networking.dll`로 업로드한 모델만 태스크 생성 성공. DLL이 추가 서명/단계를 포함하는 것으로 추정.
+2. **MQTT 명령 검증** — 프린터 펌웨어가 써드파티 MQTT 명령 차단 (`err_code: 84033543`, `reason: "mqtt message verify failed"`). Developer Mode 활성화 시 우회 가능하나 LAN 전용.
+
+**결론: 현재 펌웨어로 써드파티 Cloud 프린팅 불가능.**
+
+#### LAN 모드 (`lan`) — 전환 예정
+
+```
+슬라이싱 → FTPS 업로드 (printer:990) → MQTT project_file (ftp:///cache/파일명)
+```
+
+- Developer Mode 필요 (프린터 터치스크린에서 활성화)
+- FTPS: `bblp` / `{access_code}` @ `{printer_ip}:990`
+- MQTT: `bblp` / `{access_code}` @ `{printer_ip}:8883`
+- Cloud 연결 불가 (Developer Mode는 LAN 전용)
+- 코드 이미 구현됨 (`printer-upload.ts`, `printer-mqtt.ts`)
+
+### Bambu Connect 검토 결과 (불채택)
+
+Bambu Connect는 데스크톱 미들웨어 앱으로 URL scheme(`bambu-connect://import-file`)으로만 연동 가능. REST API 없음, 사용자 UI 조작 필요, 서버 자동화 불가. 우리 파이프라인(웹 서버 자동 프린트)에 부적합.
+
+대안인 **Bambu Local Server (Enterprise SDK)**는 Docker 기반 REST API를 제공하나 접근권 신청 필요 (`devpartner@bambulab.com`).
+
+### Cloud API 엔드포인트 참조
+
+| 엔드포인트 | 메서드 | 용도 |
+|------------|--------|------|
+| `/v1/user-service/user/login` | POST | 로그인 (accessToken 반환) |
+| `/v1/design-user-service/my/preference` | GET | UID 조회 (MQTT username용) |
+| `/v1/iot-service/api/user/bind` | GET | 바인딩된 프린터 목록 |
+| `/v1/iot-service/api/user/project` | POST | 프로젝트 생성 (upload URL + ticket) |
+| `/v1/iot-service/api/user/project/{id}` | PATCH | 프로젝트 패치 (모델 연결) |
+| `/v1/iot-service/api/user/notification` | PUT | 업로드 완료 알림 |
+| `/v1/iot-service/api/user/notification?action=upload&ticket=...` | GET | 서버 처리 상태 폴링 |
+| `/v1/user-service/my/task` | POST | 프린트 태스크 생성 |
+
+### TODO: LAN 모드 전환
+
+1. 프린터에서 Developer Mode 활성화
+2. `.env`에서 `CONNECTION_MODE=lan` 으로 변경
+3. `PRINTER_IP`, `PRINTER_ACCESS_CODE` 환경변수 확인
+4. FTPS 업로드 → MQTT 프린트 명령 E2E 테스트
+5. Cloud 전용 코드(task 생성 등)는 유지하되, LAN 경로가 기본값
