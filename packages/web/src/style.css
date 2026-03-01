@@ -732,3 +732,207 @@ footer ul {
   color: #b33;
   font-size: 0.85em;
 }
+
+/* Printer Settings Button */
+.printer-settings-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 3em;
+  flex-shrink: 0;
+  padding: 0;
+  background: var(--color-surface);
+  border: 2px solid var(--color-neutral-light);
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s;
+}
+
+.printer-settings-btn:hover {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* Printer Modal */
+.printer-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1em;
+}
+
+.printer-modal {
+  background: var(--color-surface);
+  border-radius: var(--radius-lg);
+  padding: 2em;
+  width: 100%;
+  max-width: 400px;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
+}
+
+.printer-modal-title {
+  margin: 0 0 1.25em;
+  font-size: 1.1em;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.printer-modal-loading {
+  color: var(--color-text-muted);
+  font-size: 0.9em;
+}
+
+/* Printer Form */
+.printer-form-field {
+  margin-bottom: 1em;
+}
+
+.printer-form-field label {
+  display: block;
+  font-size: 0.8em;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted);
+  margin-bottom: 0.4em;
+}
+
+.printer-form-field input[type="text"] {
+  width: 100%;
+  padding: 0.65em 0.75em;
+  border: 1.5px solid var(--color-neutral-light);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 0.95em;
+  color: var(--color-text);
+  background: var(--color-bg);
+  transition: border-color 0.15s;
+  box-sizing: border-box;
+}
+
+.printer-form-field input[type="text"]:focus {
+  outline: none;
+  border-color: var(--color-primary);
+}
+
+.printer-form-readonly {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5em 0;
+}
+
+.printer-form-name {
+  font-weight: 600;
+  font-size: 0.95em;
+}
+
+/* Printer Status Badge */
+.printer-status-badge {
+  font-size: 0.75em;
+  font-weight: 600;
+  padding: 0.25em 0.6em;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.printer-status-badge[data-status="idle"] {
+  background: var(--color-accent-light);
+  color: var(--color-primary);
+}
+
+.printer-status-badge[data-status="printing"] {
+  background: var(--color-accent);
+  color: var(--color-primary);
+}
+
+.printer-status-badge[data-status="paused"] {
+  background: var(--color-warm);
+  color: #8a6d3b;
+}
+
+.printer-status-badge[data-status="error"] {
+  background: #f8d7da;
+  color: #b33;
+}
+
+.printer-status-badge[data-status="offline"] {
+  background: var(--color-neutral-light);
+  color: var(--color-text-muted);
+}
+
+/* Printer Form Actions */
+.printer-form-actions {
+  display: flex;
+  gap: 0.5em;
+  margin-top: 1.5em;
+}
+
+.printer-btn-test,
+.printer-btn-save {
+  flex: 1;
+  padding: 0.65em 1em;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-size: 0.9em;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.printer-btn-test {
+  background: var(--color-bg);
+  border: 1.5px solid var(--color-neutral-light);
+  color: var(--color-text);
+}
+
+.printer-btn-test:hover:not(:disabled) {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.printer-btn-save {
+  background: var(--color-primary);
+  border: 1.5px solid var(--color-primary);
+  color: #fff;
+}
+
+.printer-btn-save:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+.printer-btn-test:disabled,
+.printer-btn-save:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+/* Printer Form Message */
+.printer-form-message {
+  margin-top: 0.75em;
+  padding: 0.5em 0.75em;
+  border-radius: var(--radius-sm);
+  font-size: 0.85em;
+}
+
+.printer-form-message--success {
+  background: var(--color-accent-light);
+  color: var(--color-primary);
+}
+
+.printer-form-message--error {
+  background: #f8d7da;
+  color: #b33;
+}
+
+.printer-form-message--info {
+  background: var(--color-warm);
+  color: var(--color-text-muted);
+}

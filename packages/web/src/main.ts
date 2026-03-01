@@ -12,6 +12,7 @@ import { Dyn } from "twrl";
 
 import { rangeControl, stepper, toggleControl } from "./controls";
 import { initPrintButton } from "./print/job-panel";
+import { initPrinterSettings } from "./print/printer-settings";
 
 /// CONSTANTS
 
@@ -249,6 +250,7 @@ const link = document.querySelector("#download") as HTMLAnchorElement;
 
 // Print Now button
 initPrintButton(tmfLoader);
+initPrinterSettings();
 
 const controls = document.querySelector("#controls") as HTMLDivElement;
 
