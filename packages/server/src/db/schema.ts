@@ -22,6 +22,7 @@ function initSchema(db: Database.Database) {
       ip          TEXT NOT NULL,
       access_code TEXT NOT NULL,
       serial      TEXT NOT NULL,
+      dev_id      TEXT NOT NULL DEFAULT '',
       camera_type TEXT NOT NULL DEFAULT 'rtsps',
       status      TEXT NOT NULL DEFAULT 'idle',
       created_at  TEXT NOT NULL DEFAULT (datetime('now'))
@@ -44,6 +45,13 @@ function initSchema(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
     CREATE INDEX IF NOT EXISTS idx_jobs_printer ON jobs(printer_id);
   `);
+
+  // Migration: add dev_id column to existing databases
+  try {
+    db.exec(`ALTER TABLE printers ADD COLUMN dev_id TEXT NOT NULL DEFAULT ''`);
+  } catch {
+    // Column already exists — ignore
+  }
 }
 
 export function ensureDefaultPrinter() {
@@ -51,8 +59,8 @@ export function ensureDefaultPrinter() {
   const existing = db.prepare("SELECT id FROM printers WHERE id = ?").get(config.printer.id);
   if (!existing) {
     db.prepare(`
-      INSERT INTO printers (id, name, model, ip, access_code, serial, camera_type)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO printers (id, name, model, ip, access_code, serial, dev_id, camera_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       config.printer.id,
       config.printer.name,
@@ -60,7 +68,23 @@ export function ensureDefaultPrinter() {
       config.printer.ip,
       config.printer.accessCode,
       config.printer.serial,
+      config.printer.devId,
       config.printer.cameraType,
+    );
+  } else {
+    // Update existing printer with latest env values
+    db.prepare(`
+      UPDATE printers SET name = ?, model = ?, ip = ?, access_code = ?, serial = ?, dev_id = ?, camera_type = ?
+      WHERE id = ?
+    `).run(
+      config.printer.name,
+      config.printer.model,
+      config.printer.ip,
+      config.printer.accessCode,
+      config.printer.serial,
+      config.printer.devId,
+      config.printer.cameraType,
+      config.printer.id,
     );
   }
 }

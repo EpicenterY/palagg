@@ -37,10 +37,21 @@ export interface Printer {
   model: string;
   ip: string;
   serial: string;
+  dev_id: string;
   camera_type: CameraType;
   status: PrinterStatus;
   created_at: string;
 }
+
+export interface CloudUploadResult {
+  url: string;
+  md5: string;
+  projectId: string;
+  modelId: string;
+  profileId: string;
+}
+
+export type ConnectionMode = "lan" | "cloud";
 
 // REST API request/response types
 export interface CreateJobRequest {

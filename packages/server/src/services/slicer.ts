@@ -4,12 +4,23 @@ import { resolve } from "node:path";
 import { config } from "../config.js";
 import { updateJobStatus } from "../db/jobs.js";
 import { broadcast } from "../ws/jobs.js";
+import { buildPresets } from "./build-presets.js";
 import type { Job } from "@palagg/shared";
 
 let busy = false;
 
+/** Cached preset paths (built once on first slice) */
+let presetPaths: { machinePreset: string; processPreset: string; filamentPreset: string } | null = null;
+
 export function isSlicerBusy(): boolean {
   return busy;
+}
+
+async function ensurePresets() {
+  if (!presetPaths) {
+    presetPaths = await buildPresets();
+  }
+  return presetPaths;
 }
 
 export async function sliceJob(job: Job): Promise<void> {
@@ -23,12 +34,18 @@ export async function sliceJob(job: Job): Promise<void> {
     await mkdir(config.slicedDir, { recursive: true });
     const outputPath = resolve(config.slicedDir, `${job.id}.gcode.3mf`);
 
+    const presets = await ensurePresets();
+
     await new Promise<void>((res, rej) => {
-      const proc = spawn(config.slicerPath, [
+      const args = [
         "--slice", "0",
+        "--load-settings", `${presets.machinePreset};${presets.processPreset}`,
+        "--load-filaments", presets.filamentPreset,
         "--export-3mf", outputPath,
+        ...(config.connectionMode === "cloud" ? ["--min-save"] : []),
         job.input_path!,
-      ], { stdio: ["ignore", "pipe", "pipe"] });
+      ];
+      const proc = spawn(config.slicerPath, args, { stdio: ["ignore", "pipe", "pipe"] });
 
       let stderr = "";
 

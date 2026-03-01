@@ -28,26 +28,40 @@ async function main() {
   await app.register(websocket);
 
   // Routes
-  await app.register(jobRoutes, { prefix: "/api" });
-  await app.register(printerRoutes, { prefix: "/api" });
+  await app.register(jobRoutes);
+  await app.register(printerRoutes);
   await app.register(jobWsRoutes);
   await app.register(cameraWsRoutes);
 
   // Health check
-  app.get("/api/health", async () => ({ status: "ok" }));
+  app.get("/api/health", async () => ({ status: "ok", mode: config.connectionMode }));
 
   // Start
   await app.listen({ port: config.port, host: config.host });
 
   // Connect to printer MQTT
-  if (config.printer.accessCode && config.printer.serial) {
-    try {
-      connectMqtt(config.printer.id);
-    } catch (err) {
-      app.log.warn({ err }, "Failed to connect MQTT - printer features disabled until configured");
+  if (config.connectionMode === "cloud") {
+    // Cloud mode: need access token or email/password
+    if (config.cloud.accessToken || (config.cloud.email && config.cloud.password)) {
+      try {
+        await connectMqtt(config.printer.id);
+      } catch (err) {
+        app.log.warn({ err }, "Failed to connect Cloud MQTT - printer features disabled");
+      }
+    } else {
+      app.log.warn("Cloud mode requires BAMBU_ACCESS_TOKEN or BAMBU_EMAIL+BAMBU_PASSWORD");
     }
   } else {
-    app.log.warn("Printer not configured (missing PRINTER_ACCESS_CODE or PRINTER_SERIAL)");
+    // LAN mode: need access code and serial
+    if (config.printer.accessCode && config.printer.serial) {
+      try {
+        await connectMqtt(config.printer.id);
+      } catch (err) {
+        app.log.warn({ err }, "Failed to connect LAN MQTT - printer features disabled");
+      }
+    } else {
+      app.log.warn("LAN mode requires PRINTER_ACCESS_CODE and PRINTER_SERIAL");
+    }
   }
 
   // Start job orchestrator

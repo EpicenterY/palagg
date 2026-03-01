@@ -14,7 +14,7 @@ export function getPrinter(id: string): Printer | undefined {
 
 export function listPrinters(): Printer[] {
   const db = getDb();
-  return (db.prepare("SELECT id, name, model, ip, serial, camera_type, status, created_at FROM printers").all()) as Printer[];
+  return (db.prepare("SELECT id, name, model, ip, serial, dev_id, camera_type, status, created_at FROM printers").all()) as Printer[];
 }
 
 export function updatePrinterStatus(id: string, status: PrinterStatus) {

@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { resolve } from "node:path";
+import type { ConnectionMode } from "@palagg/shared";
 
 function env(key: string, fallback?: string): string {
   const val = process.env[key] ?? fallback;
@@ -19,6 +20,14 @@ export const config = {
 
   slicerPath: env("SLICER_PATH", "C:/Program Files/Bambu Studio/bambu-studio.exe"),
 
+  slicer: {
+    machinePreset: env("SLICER_MACHINE_PRESET", "Bambu Lab X1 Carbon 0.4 nozzle"),
+    processPreset: env("SLICER_PROCESS_PRESET", "0.20mm Standard @BBL X1C"),
+    filamentPreset: env("SLICER_FILAMENT_PRESET", "Bambu PLA Basic @BBL X1C"),
+  },
+
+  connectionMode: env("CONNECTION_MODE", "cloud") as ConnectionMode,
+
   printer: {
     id: env("PRINTER_ID", "bambu_x1c_01"),
     name: env("PRINTER_NAME", "Bambu X1C"),
@@ -26,6 +35,15 @@ export const config = {
     ip: env("PRINTER_IP", "192.168.1.100"),
     accessCode: env("PRINTER_ACCESS_CODE", ""),
     serial: env("PRINTER_SERIAL", ""),
+    devId: env("PRINTER_DEV_ID", ""),
     cameraType: env("PRINTER_CAMERA_TYPE", "rtsps") as "rtsps" | "tcp_jpeg",
+  },
+
+  cloud: {
+    email: env("BAMBU_EMAIL", ""),
+    password: env("BAMBU_PASSWORD", ""),
+    accessToken: env("BAMBU_ACCESS_TOKEN", ""),
+    mqttBroker: env("BAMBU_MQTT_BROKER", "us.mqtt.bambulab.com"),
+    apiBase: env("BAMBU_API_BASE", "https://api.bambulab.com"),
   },
 } as const;

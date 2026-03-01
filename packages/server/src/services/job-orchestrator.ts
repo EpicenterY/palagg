@@ -1,11 +1,17 @@
 import { listJobs, updateJobStatus } from "../db/jobs.js";
 import { broadcast } from "../ws/jobs.js";
 import { sliceJob, isSlicerBusy } from "./slicer.js";
-import { uploadToPrinter } from "./printer-ftp.js";
+import { uploadSlicedFile, type UploadResult } from "./printer-upload.js";
 import { sendPrintCommand } from "./printer-mqtt.js";
+import { createTask } from "./bambu-cloud-auth.js";
+import { config } from "../config.js";
+import { getPrinterWithCredentials } from "../db/printers.js";
 import { basename } from "node:path";
 
 let timer: ReturnType<typeof setInterval> | null = null;
+
+/** Cache upload results so processPendingPrint can access cloud URL/MD5 */
+const uploadCache = new Map<string, UploadResult>();
 
 export function startOrchestrator() {
   if (timer) return;
@@ -62,7 +68,10 @@ async function processPendingUpload() {
 
   try {
     const remoteFilename = basename(job.output_path);
-    await uploadToPrinter(job.printer_id, job.output_path, remoteFilename);
+    const result = await uploadSlicedFile(job.printer_id, job.output_path, remoteFilename);
+
+    // Cache result for use in processPendingPrint
+    uploadCache.set(job.id, result);
 
     updateJobStatus(job.id, "pending_print");
     broadcast({ type: "job:status", jobId: job.id, status: "pending_print", progress: 100, updatedAt: new Date().toISOString() });
@@ -84,7 +93,43 @@ async function processPendingPrint() {
 
   try {
     const remoteFilename = basename(job.output_path);
-    sendPrintCommand(remoteFilename);
+    const cached = uploadCache.get(job.id);
+
+    let taskId: string | undefined;
+    let subtaskId: string | undefined;
+
+    // In cloud mode, try to create a task before sending the MQTT print command
+    if (config.connectionMode === "cloud" && cached?.projectId && cached.modelId && cached.profileId) {
+      const printer = getPrinterWithCredentials(job.printer_id);
+      const deviceId = printer?.dev_id || printer?.serial || "";
+      try {
+        const result = await createTask({
+          projectId: cached.projectId,
+          modelId: cached.modelId,
+          profileId: cached.profileId,
+          deviceId,
+          title: job.filename,
+        });
+        taskId = result.taskId;
+        subtaskId = result.subtaskId;
+      } catch (err) {
+        // Task creation may fail — continue with MQTT command using project IDs only
+        console.warn(`[Orchestrator] Task creation failed, proceeding with project IDs:`, err instanceof Error ? err.message : err);
+      }
+    }
+
+    sendPrintCommand({
+      filename: remoteFilename,
+      cloudUrl: cached?.cloudUrl,
+      md5: cached?.md5,
+      projectId: cached?.projectId,
+      profileId: cached?.profileId,
+      taskId,
+      subtaskId,
+    });
+
+    // Clean up cache entry
+    uploadCache.delete(job.id);
 
     updateJobStatus(job.id, "printing");
     broadcast({ type: "job:status", jobId: job.id, status: "printing", progress: 0, updatedAt: new Date().toISOString() });
