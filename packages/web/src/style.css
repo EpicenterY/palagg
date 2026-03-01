@@ -137,11 +137,34 @@ canvas {
   }
 
   #controls {
-    --label-width: 3.5em;
+    --label-width: auto;
   }
 
+  /* 2-row layout: [label ... value] / [====slider====] */
   .range-input-wrapper {
-    gap: 0.5em;
+    display: grid !important;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 0.3em 0;
+    align-items: center;
+  }
+
+  .range-input-wrapper label {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+  }
+
+  .range-input-wrapper .range-input-value {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .range-input-wrapper input[type="range"] {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    margin: 0;
   }
 
   .toggle-option {
