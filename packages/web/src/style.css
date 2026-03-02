@@ -475,6 +475,13 @@ footer ul {
   opacity: 1;
   transform: translateY(0);
   padding-top: var(--control-gap) !important;
+  overflow: visible;
+}
+
+@media (width < 600px) {
+  .box-extra-panel.is-open {
+    max-height: 12em;
+  }
 }
 
 .box-extra-panel .range-input-wrapper label {
@@ -957,6 +964,25 @@ footer ul {
 @media (width < 600px) {
   .order-items {
     max-height: 9.5em;
+  }
+
+  .action-buttons {
+    gap: 0.5em;
+  }
+
+  .action-buttons #download,
+  #add-to-order {
+    font-size: 0.9em;
+    padding: 0.8em 0.5em;
+    white-space: nowrap;
+  }
+}
+
+@media (width < 340px) {
+  .action-buttons #download,
+  #add-to-order,
+  #place-order {
+    font-size: 0.78em;
   }
 }
 
