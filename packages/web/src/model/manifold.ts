@@ -137,6 +137,40 @@ export async function base(
 
 const DIVIDER_THICKNESS = 1.5; // mm
 
+async function applySkadisHooks(
+  model: Manifold,
+  height: number,
+  width: number,
+  depth: number,
+  radius: number,
+): Promise<Manifold> {
+  const padding = 5; /* mm */
+  const W = width - 2 * radius - 2 * padding; // Working area
+  const gw = 40; // (horizontal) gap between clip origins
+  const N = Math.floor(W / gw + 1); // How many (pairs of) clips we can fit
+  const M = N - 1;
+  const dx = ((-1 * M) / 2) * gw; // where to place the clips
+
+  // Same as horizontal, but vertically (slightly simpler because we always start
+  // from 0 and we don't need to take the radius into account)
+  const H = height - CLIP_HEIGHT; // Total height minus clip height
+  const gh = 40;
+  const NV = Math.floor(H / gh + 1);
+
+  let result = model;
+  for (let i = 0; i < N; i++) {
+    for (let j = 0; j < NV; j++) {
+      // For all but the first level, chamfer the clips
+      const chamfer = j > 0;
+      const [clipL, clipR] = await clips(chamfer);
+      result = result.add(clipL.translate(i * gw + dx, -depth / 2, j * gh));
+      result = result.add(clipR.translate(i * gw + dx, -depth / 2, j * gh));
+    }
+  }
+
+  return result;
+}
+
 // Drawer organizer: hollow box with a grid of internal dividers, no clips
 export async function drawerOrganizer(
   height: number,
@@ -147,6 +181,7 @@ export async function drawerOrganizer(
   bottom: number,
   cols: number, // number of vertical dividers → (cols+1) columns
   rows: number, // number of horizontal dividers → (rows+1) rows
+  hookReferenceHeight: number = height,
 ): Promise<Manifold> {
   let result = await base(height, width, depth, radius, wall, bottom);
 
@@ -180,42 +215,19 @@ export async function drawerOrganizer(
     result = result.add(divider);
   }
 
-  return result;
+  return applySkadisHooks(result, hookReferenceHeight, width, depth, radius);
 }
 
 // The box (with clips), with origin where clips meet the box
 export async function box(
   height: number,
+  hookReferenceHeight: number,
   width: number,
   depth: number,
   radius: number,
   wall: number,
   bottom: number,
 ): Promise<Manifold> {
-  const padding = 5; /* mm */
-  const W = width - 2 * radius - 2 * padding; // Working area
-  const gw = 40; // (horizontal) gap between clip origins
-  const N = Math.floor(W / gw + 1); // How many (pairs of) clips we can fit
-  const M = N - 1;
-  const dx = ((-1 * M) / 2) * gw; // where to place the clips
-
-  // Same as horizontal, but vertically (slightly simpler because we always start
-  // from 0 and we don't need to take the radius into account)
-  const H = height - CLIP_HEIGHT; // Total height minus clip height
-  const gh = 40;
-  const NV = Math.floor(H / gh + 1);
-
   let res = await base(height, width, depth, radius, wall, bottom);
-
-  for (let i = 0; i < N; i++) {
-    for (let j = 0; j < NV; j++) {
-      // For all but the first level, chamfer the clips
-      const chamfer = j > 0;
-      const [clipL, clipR] = await clips(chamfer);
-      res = res.add(clipL.translate(i * gw + dx, -depth / 2, j * gh));
-      res = res.add(clipR.translate(i * gw + dx, -depth / 2, j * gh));
-    }
-  }
-
-  return res;
+  return applySkadisHooks(res, hookReferenceHeight, width, depth, radius);
 }

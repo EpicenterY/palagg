@@ -4,15 +4,14 @@ import * as THREE from "three";
 import { Renderer } from "./rendering/renderer";
 
 import { CLIP_HEIGHT, box, drawerOrganizer } from "./model/manifold";
-import { mesh2geometry } from "./model/export";
+import { exportManifold, mesh2geometry } from "./model/export";
 import { TMFLoader } from "./model/load";
 import { Animate, immediate } from "./animate";
+import { zipSync } from "fflate";
 
 import { Dyn } from "twrl";
 
 import { rangeControl, stepper, toggleControl } from "./controls";
-import { initPrintButton } from "./print/job-panel";
-import { initPrinterSettings } from "./print/printer-settings";
 
 /// CONSTANTS
 
@@ -49,6 +48,10 @@ const START_LEVELS = 2;
 const MIN_LEVELS = 1;
 const MAX_LEVELS = 5;
 
+const START_TOP_EXTRA = 0;
+const MIN_TOP_EXTRA = 0;
+const MAX_TOP_EXTRA = 20; // 1/2 of next hook interval (40mm)
+
 const START_WIDTH = 80;
 const MIN_WIDTH = 10 + 2 * START_RADIUS;
 const MAX_WIDTH = 204; /* somewhat arbitrary */
@@ -67,12 +70,19 @@ const MAX_DEPTH = 204; /* somewhat arbitrary */
 const shapeType = new Dyn<ShapeType>("box");
 
 const levels = new Dyn(START_LEVELS); /* number of clip levels */
+const topExtra = new Dyn(START_TOP_EXTRA); /* extra body height above top hook */
 
 const cols = new Dyn(START_COLS);
 const rows = new Dyn(START_ROWS);
 
+const baseHeight = levels.map(
+  (x) => x * CLIP_HEIGHT + (x - 1) * (40 - CLIP_HEIGHT),
+);
+
 const modelDimensions = {
-  height: levels.map((x) => x * CLIP_HEIGHT + (x - 1) * (40 - CLIP_HEIGHT)),
+  height: Dyn.sequence([baseHeight, topExtra] as const).map(
+    ([h, extra]) => h + extra,
+  ),
   width: new Dyn(START_WIDTH),
   depth: new Dyn(START_DEPTH),
   radius: new Dyn(START_RADIUS),
@@ -118,9 +128,90 @@ const partPositioning = new Dyn<PartPosition>({ tag: "static", position: 0 });
 
 const tmfLoader = new TMFLoader();
 
+interface ModelSnapshot {
+  shape: ShapeType;
+  height: number;
+  topExtra: number;
+  width: number;
+  depth: number;
+  radius: number;
+  wall: number;
+  bottom: number;
+  cols: number;
+  rows: number;
+}
+
+interface OrderLine {
+  key: string;
+  snapshot: ModelSnapshot;
+  filename: string;
+  quantity: number;
+}
+
+const snapshotKey = (snapshot: ModelSnapshot) =>
+  [
+    snapshot.shape,
+    snapshot.height,
+    snapshot.topExtra,
+    snapshot.width,
+    snapshot.depth,
+    snapshot.radius,
+    snapshot.wall,
+    snapshot.bottom,
+    snapshot.cols,
+    snapshot.rows,
+  ].join("|");
+
+const buildSnapshot = (): ModelSnapshot => ({
+  shape: shapeType.latest,
+  height: modelDimensions.height.latest,
+  topExtra: topExtra.latest,
+  width: modelDimensions.width.latest,
+  depth: modelDimensions.depth.latest,
+  radius: modelDimensions.radius.latest,
+  wall: modelDimensions.wall.latest,
+  bottom: modelDimensions.bottom.latest,
+  cols: cols.latest,
+  rows: rows.latest,
+});
+
+const modelForSnapshot = (snapshot: ModelSnapshot) =>
+  snapshot.shape === "organizer"
+    ? drawerOrganizer(
+        snapshot.height,
+        snapshot.width,
+        snapshot.depth,
+        snapshot.radius,
+        snapshot.wall,
+        snapshot.bottom,
+        snapshot.cols,
+        snapshot.rows,
+        snapshot.height - snapshot.topExtra,
+      )
+    : box(
+        snapshot.height,
+        snapshot.height - snapshot.topExtra,
+        snapshot.width,
+        snapshot.depth,
+        snapshot.radius,
+        snapshot.wall,
+        snapshot.bottom,
+      );
+
+const filenameForSnapshot = (snapshot: ModelSnapshot) =>
+  snapshot.shape === "organizer"
+    ? `palagg-organizer-${snapshot.width}-${snapshot.depth}-${snapshot.height}.3mf`
+    : `palagg-${snapshot.width}-${snapshot.depth}-${snapshot.height}.3mf`;
+
+const labelForSnapshot = (snapshot: ModelSnapshot) =>
+  snapshot.shape === "organizer"
+    ? `PÅLÄGG Organizer ${snapshot.width}×${snapshot.depth}×${snapshot.height} (${snapshot.cols + 1}X${snapshot.rows + 1})`
+    : `PÅLÄGG Box ${snapshot.width}×${snapshot.depth}×${snapshot.height}`;
+
 // Reloads the model seen on page
 async function reloadModel(
   height: number,
+  hookReferenceHeight: number,
   width: number,
   depth: number,
   radius: number,
@@ -132,8 +223,26 @@ async function reloadModel(
 ) {
   const model =
     shape === "organizer"
-      ? await drawerOrganizer(height, width, depth, radius, wall, bottom, c, ro)
-      : await box(height, width, depth, radius, wall, bottom);
+      ? await drawerOrganizer(
+          height,
+          width,
+          depth,
+          radius,
+          wall,
+          bottom,
+          c,
+          ro,
+          hookReferenceHeight,
+        )
+      : await box(
+          height,
+          hookReferenceHeight,
+          width,
+          depth,
+          radius,
+          wall,
+          bottom,
+        );
   const geometry = mesh2geometry(model);
   geometry.computeVertexNormals(); // Make sure the geometry has normals
   mesh.geometry = geometry;
@@ -149,17 +258,24 @@ Dyn.sequence([
   modelDimensions.radius,
   modelDimensions.wall,
   modelDimensions.bottom,
+  topExtra,
   cols,
   rows,
-] as const).addListener(([shape, h, w, d, r, wa, bo, c, ro]) => {
-  const filename =
-    shape === "organizer"
-      ? `palagg-organizer-${w}-${d}-${h}.3mf`
-      : `palagg-${w}-${d}-${h}.3mf`;
-  const modelP =
-    shape === "organizer"
-      ? drawerOrganizer(h, w, d, r, wa, bo, c, ro)
-      : box(h, w, d, r, wa, bo);
+] as const).addListener(([shape, h, w, d, r, wa, bo, extra, c, ro]) => {
+  const snapshot: ModelSnapshot = {
+    shape,
+    height: h,
+    topExtra: extra,
+    width: w,
+    depth: d,
+    radius: r,
+    wall: wa,
+    bottom: bo,
+    cols: c,
+    rows: ro,
+  };
+  const filename = filenameForSnapshot(snapshot);
+  const modelP = modelForSnapshot(snapshot);
   tmfLoader.load(modelP, filename);
 });
 
@@ -228,11 +344,17 @@ const animations = {
   bottom: new Animate(START_BOTTOM),
 };
 
+const hookReferenceAnimation = new Animate(baseHeight.latest);
+
 DIMENSIONS.forEach((dim) =>
   modelDimensions[dim].addListener((val) => {
     animations[dim].startAnimationTo(val);
   }),
 );
+
+baseHeight.addListener((val) => {
+  hookReferenceAnimation.startAnimationTo(val);
+});
 
 const ORGANIZER_DIMS = ["cols", "rows"] as const;
 const organizerAnimations = {
@@ -248,17 +370,147 @@ rows.addListener((v) => organizerAnimations.rows.startAnimationTo(v));
 // Download button
 const link = document.querySelector("#download") as HTMLAnchorElement;
 
-// Print Now button
-initPrintButton(tmfLoader);
-initPrinterSettings();
+const addToOrderButton = document.querySelector(
+  "#add-to-order",
+) as HTMLButtonElement;
+const placeOrderButton = document.querySelector(
+  "#place-order",
+) as HTMLButtonElement;
+const orderItemsList = document.querySelector("#order-items") as HTMLUListElement;
+const orderSummary = document.querySelector(".order-sheet-title") as HTMLHeadingElement;
+const orderLines: OrderLine[] = [];
+let orderZipUrl: string | undefined;
+
+const renderOrderSheet = () => {
+  const totalQuantity = orderLines.reduce((sum, line) => sum + line.quantity, 0);
+  orderSummary.textContent = `총 ${totalQuantity}개의 PÅLÄGG`;
+
+  if (orderLines.length === 0) {
+    orderItemsList.innerHTML =
+      '<li class="order-items-empty">아직 추가된 주문이 없습니다.</li>';
+    placeOrderButton.disabled = true;
+    return;
+  }
+
+  orderItemsList.innerHTML = orderLines
+    .map(
+      (line, index) => `
+      <li class="order-item">
+        <span class="order-item-index">${index + 1}</span>
+        <span class="order-item-label">${labelForSnapshot(line.snapshot)}</span>
+        <span class="order-item-qty">x${line.quantity}</span>
+        <button type="button" class="order-item-remove" data-order-key="${line.key}" aria-label="주문 항목 삭제">×</button>
+      </li>
+    `,
+    )
+    .join("");
+
+  placeOrderButton.disabled = false;
+};
+
+const addCurrentSelectionToOrder = () => {
+  const snapshot = buildSnapshot();
+  const key = snapshotKey(snapshot);
+  const existing = orderLines.find((line) => line.key === key);
+  if (existing) {
+    existing.quantity += 1;
+  } else {
+    orderLines.push({
+      key,
+      snapshot,
+      filename: filenameForSnapshot(snapshot),
+      quantity: 1,
+    });
+  }
+  renderOrderSheet();
+};
+
+const downloadOrderAsZip = async () => {
+  if (orderLines.length === 0) return;
+
+  placeOrderButton.disabled = true;
+  placeOrderButton.textContent = "주문 파일 생성 중...";
+
+  try {
+    const files: Record<string, Uint8Array> = {};
+    const filenameCounts = new Map<string, number>();
+    for (const line of orderLines) {
+      const model = await modelForSnapshot(line.snapshot);
+      const blob = exportManifold(model);
+      const bytes = new Uint8Array(await blob.arrayBuffer());
+
+      for (let i = 0; i < line.quantity; i++) {
+        const lastDot = line.filename.lastIndexOf(".");
+        const base =
+          lastDot >= 0 ? line.filename.slice(0, lastDot) : line.filename;
+        const ext = lastDot >= 0 ? line.filename.slice(lastDot) : "";
+        const count = (filenameCounts.get(line.filename) ?? 0) + 1;
+        filenameCounts.set(line.filename, count);
+        const uniqueFilename =
+          count === 1 ? line.filename : `${base}-${count}${ext}`;
+
+        files[uniqueFilename] = bytes;
+      }
+    }
+
+    const zipBytes = zipSync(files);
+    const zipBlob = new Blob([Uint8Array.from(zipBytes)], {
+      type: "application/zip",
+    });
+
+    if (orderZipUrl) {
+      URL.revokeObjectURL(orderZipUrl);
+    }
+
+    orderZipUrl = URL.createObjectURL(zipBlob);
+    const now = new Date();
+    const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+    const tempLink = document.createElement("a");
+    tempLink.href = orderZipUrl;
+    tempLink.download = `palagg-order-${stamp}.zip`;
+    tempLink.click();
+
+    orderLines.length = 0;
+    renderOrderSheet();
+  } finally {
+    placeOrderButton.textContent = "한번에 주문하기";
+    placeOrderButton.disabled = orderLines.length === 0;
+  }
+};
+
+addToOrderButton.addEventListener("click", addCurrentSelectionToOrder);
+placeOrderButton.addEventListener("click", async () => {
+  try {
+    await downloadOrderAsZip();
+  } catch {
+    placeOrderButton.textContent = "다운로드 실패, 다시 시도";
+  }
+});
+
+orderItemsList.addEventListener("click", (event) => {
+  const target = event.target;
+  if (!(target instanceof HTMLButtonElement)) return;
+  if (!target.classList.contains("order-item-remove")) return;
+
+  const key = target.dataset.orderKey;
+  if (!key) return;
+
+  const index = orderLines.findIndex((line) => line.key === key);
+  if (index < 0) return;
+
+  orderLines.splice(index, 1);
+  renderOrderSheet();
+});
+
+renderOrderSheet();
 
 const controls = document.querySelector("#controls") as HTMLDivElement;
 
 // Shape selector (prepended so it appears first)
 const shapeControl = toggleControl("shape", {
   options: [
-    { value: "box", label: "SKÅDIS Box" },
-    { value: "organizer", label: "Organizer" },
+    { value: "box", label: "Box" },
+    { value: "organizer", label: "Grid" },
   ],
 });
 controls.append(shapeControl.wrapper);
@@ -269,6 +521,47 @@ const levelsControl = stepper("levels", {
   max: String(MAX_LEVELS),
 });
 controls.append(levelsControl);
+
+const topExtraToggle = document.createElement("button");
+topExtraToggle.type = "button";
+topExtraToggle.className = "box-extra-toggle";
+topExtraToggle.setAttribute("aria-label", "상단 높이 추가 설정 열기/닫기");
+topExtraToggle.title = "상단 높이 추가 설정";
+
+const topExtraControl = rangeControl("top-extra", {
+  name: "Top Extra",
+  min: String(MIN_TOP_EXTRA),
+  max: String(MAX_TOP_EXTRA),
+  sliderMin: String(MIN_TOP_EXTRA),
+  sliderMax: String(MAX_TOP_EXTRA),
+});
+
+const topExtraPanel = document.createElement("div");
+topExtraPanel.className = "box-extra-panel";
+topExtraPanel.id = "top-extra-panel";
+topExtraPanel.append(topExtraControl.wrapper);
+topExtraToggle.setAttribute("aria-controls", topExtraPanel.id);
+
+let topExtraOpen = false;
+const setTopExtraOpen = (open: boolean) => {
+  topExtraOpen = open;
+  topExtraPanel.classList.toggle("is-open", open);
+  topExtraToggle.setAttribute("aria-expanded", open ? "true" : "false");
+  topExtraToggle.textContent = open ? "−" : "+";
+};
+
+setTopExtraOpen(false);
+topExtraToggle.addEventListener("click", () => {
+  setTopExtraOpen(!topExtraOpen);
+});
+
+levelsControl.classList.add("levels-control");
+const levelsLabel = levelsControl.querySelector("label");
+if (levelsLabel) {
+  levelsLabel.insertAdjacentElement("afterend", topExtraToggle);
+}
+
+controls.append(topExtraPanel);
 
 const widthControl = rangeControl("width", {
   name: "Width",
@@ -288,36 +581,32 @@ const depthControl = rangeControl("depth", {
 });
 controls.append(depthControl.wrapper);
 
-// Organizer-only controls
-const colsControl = stepper("cols", {
-  label: "Columns",
-  min: String(MIN_COLS),
-  max: String(MAX_COLS),
-});
-controls.append(colsControl);
-
-const rowsControl = stepper("rows", {
-  label: "Rows",
-  min: String(MIN_ROWS),
-  max: String(MAX_ROWS),
-});
-controls.append(rowsControl);
+// Organizer-only control (Grid: Cols X Rows)
+const gridControl = document.createElement("div");
+gridControl.className = "grid-input-wrapper";
+gridControl.innerHTML = `
+  <label for="grid-cols">Grid</label>
+  <div class="grid-input-value">
+    <input type="number" id="grid-cols" min="${MIN_COLS + 1}" max="${MAX_COLS + 1}" aria-label="Grid columns" />
+    <span class="grid-input-sep">X</span>
+    <input type="number" id="grid-rows" min="${MIN_ROWS}" max="${MAX_ROWS + 1}" aria-label="Grid rows" />
+  </div>
+`;
+controls.append(gridControl);
 
 // The dimension inputs
 const inputs = {
   levels: document.querySelector("#levels")! as HTMLInputElement,
   levelsPlus: document.querySelector("#levels-plus")! as HTMLButtonElement,
   levelsMinus: document.querySelector("#levels-minus")! as HTMLButtonElement,
+  topExtra: topExtraControl.input,
+  topExtraRange: topExtraControl.range,
   width: widthControl.input,
   widthRange: widthControl.range,
   depth: depthControl.input,
   depthRange: depthControl.range,
-  cols: document.querySelector("#cols")! as HTMLInputElement,
-  colsPlus: document.querySelector("#cols-plus")! as HTMLButtonElement,
-  colsMinus: document.querySelector("#cols-minus")! as HTMLButtonElement,
-  rows: document.querySelector("#rows")! as HTMLInputElement,
-  rowsPlus: document.querySelector("#rows-plus")! as HTMLButtonElement,
-  rowsMinus: document.querySelector("#rows-minus")! as HTMLButtonElement,
+  cols: document.querySelector("#grid-cols")! as HTMLInputElement,
+  rows: document.querySelector("#grid-rows")! as HTMLInputElement,
 } as const;
 
 // Add change events to all dimension inputs
@@ -383,6 +672,24 @@ inputs.levelsMinus.addEventListener("click", () => {
   });
 });
 
+// top extra height (box-only, hidden by default)
+(
+  [
+    [inputs.topExtra, "change"],
+    [inputs.topExtraRange, "input"],
+  ] as const
+).forEach(([input, evnt]) => {
+  topExtra.addListener((extra) => {
+    input.value = `${extra}`;
+  });
+  input.addEventListener(evnt, () => {
+    const n = parseInt(input.value);
+    if (!Number.isNaN(n)) {
+      topExtra.send(Math.max(MIN_TOP_EXTRA, Math.min(n, MAX_TOP_EXTRA)));
+    }
+  });
+});
+
 // Shape selector
 shapeControl.inputs.forEach((input) => {
   input.addEventListener("change", () => {
@@ -395,13 +702,9 @@ shapeType.addListener(() => {
 });
 
 // Show/hide controls based on shape
-const boxOnlyEls: HTMLElement[] = [];
-const orgOnlyEls: HTMLElement[] = [colsControl, rowsControl];
+const orgOnlyEls: HTMLElement[] = [gridControl];
 
 shapeType.addListener((shape) => {
-  boxOnlyEls.forEach(
-    (el) => (el.style.display = shape === "box" ? "" : "none"),
-  );
   orgOnlyEls.forEach(
     (el) => (el.style.display = shape === "organizer" ? "" : "none"),
   );
@@ -410,51 +713,29 @@ shapeType.addListener((shape) => {
 // cols
 ([[inputs.cols, "change"]] as const).forEach(([input, evnt]) => {
   cols.addListener((c) => {
-    input.value = `${c}`;
+    input.value = `${c + 1}`;
   });
   input.addEventListener(evnt, () => {
     const n = parseInt(input.value);
     if (!Number.isNaN(n))
-      cols.send(Math.max(MIN_COLS, Math.min(n, MAX_COLS)));
+      cols.send(Math.max(MIN_COLS, Math.min(n - 1, MAX_COLS)));
   });
-});
-
-inputs.colsPlus.addEventListener("click", () => {
-  cols.send(Math.max(MIN_COLS, Math.min(cols.latest + 1, MAX_COLS)));
-});
-inputs.colsMinus.addEventListener("click", () => {
-  cols.send(Math.max(MIN_COLS, Math.min(cols.latest - 1, MAX_COLS)));
-});
-cols.addListener((n) => {
-  inputs.colsPlus.disabled = MAX_COLS <= n;
-  inputs.colsMinus.disabled = n <= MIN_COLS;
 });
 
 // rows
 ([[inputs.rows, "change"]] as const).forEach(([input, evnt]) => {
   rows.addListener((r) => {
-    input.value = `${r}`;
+    input.value = `${r + 1}`;
   });
   input.addEventListener(evnt, () => {
     const n = parseInt(input.value);
     if (!Number.isNaN(n))
-      rows.send(Math.max(MIN_ROWS, Math.min(n, MAX_ROWS)));
+      rows.send(Math.max(MIN_ROWS - 1, Math.min(n - 1, MAX_ROWS)));
   });
 });
 
-inputs.rowsPlus.addEventListener("click", () => {
-  rows.send(Math.max(MIN_ROWS, Math.min(rows.latest + 1, MAX_ROWS)));
-});
-inputs.rowsMinus.addEventListener("click", () => {
-  rows.send(Math.max(MIN_ROWS, Math.min(rows.latest - 1, MAX_ROWS)));
-});
-rows.addListener((n) => {
-  inputs.rowsPlus.disabled = MAX_ROWS <= n;
-  inputs.rowsMinus.disabled = n <= MIN_ROWS;
-});
-
 // Add select-all on input click
-(["levels", "width", "depth"] as const).forEach((dim) => {
+(["levels", "topExtra", "width", "depth"] as const).forEach((dim) => {
   const input = inputs[dim];
   input.addEventListener("focus", () => {
     input.select();
@@ -640,7 +921,9 @@ function loop(nowMillis: DOMHighResTimeStamp) {
     false,
   );
 
-  if (dimensionsUpdated || organizerUpdated) {
+  const hookReferenceUpdated = hookReferenceAnimation.update();
+
+  if (dimensionsUpdated || organizerUpdated || hookReferenceUpdated) {
     reloadModelNeeded = true;
   }
 
@@ -656,6 +939,7 @@ function loop(nowMillis: DOMHighResTimeStamp) {
     reloadModelNeeded = false;
     reloadModel(
       animations["height"].current,
+      hookReferenceAnimation.current,
       animations["width"].current,
       animations["depth"].current,
       animations["radius"].current,

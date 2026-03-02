@@ -47,7 +47,28 @@ body {
 
 @media (width > 1200px) {
   body {
+    --desktop-top-offset: 1.75em;
     max-width: 1200px;
+    position: relative;
+    gap: 0;
+  }
+
+  main {
+    padding-top: var(--desktop-top-offset);
+  }
+
+  header {
+    position: absolute;
+    top: var(--desktop-top-offset);
+    left: var(--gutter);
+    width: calc(50% - var(--gutter));
+    z-index: 5;
+    padding-top: 0;
+  }
+
+  .brand-title {
+    font-size: clamp(2.16rem, 4.8vw, 2.88rem);
+    line-height: 1;
   }
 
   footer {
@@ -72,6 +93,17 @@ section#about {
   background: var(--color-warm);
   border-radius: var(--radius-lg);
   padding: 2.5em;
+  position: relative;
+
+  &::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: -3em;
+    border-top: 1px solid var(--color-neutral);
+    pointer-events: none;
+  }
 
   & h3 {
     margin-top: 0;
@@ -98,7 +130,28 @@ section#about {
 @media (width > 1200px) {
   section#generator {
     grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+    margin-top: 0.75em;
   }
+
+  #part {
+    min-height: 30em;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding-top: 4.5em;
+    padding-left: 1.5em;
+    padding-right: 1.5em;
+    box-sizing: border-box;
+  }
+
+  #part #canvas-container {
+    width: 100%;
+    max-width: calc(100% - 0.01px);
+    margin-left: auto;
+    margin-right: auto;
+  }
+
   section#about {
     margin-top: 10em;
     gap: 5em;
@@ -184,16 +237,16 @@ canvas {
 
 #panel {
   display: flex;
-  max-height: 30em;
   flex-direction: column;
-  justify-content: space-between;
+  gap: 1em;
   background: var(--color-surface);
   border-radius: var(--radius-lg);
-  padding: 1.75em 2em;
+  padding: 2.1em 2em 1.75em;
   box-shadow: 0 2px 16px rgba(0, 0, 0, 0.06);
 }
 
 #canvas-container {
+  width: 100%;
   height: 30em;
   position: relative;
 }
@@ -221,7 +274,7 @@ canvas {
 header {
   font-family: var(--font-sans);
   padding-top: 1em;
-  text-align: center;
+  text-align: left;
 }
 
 header h1 {
@@ -233,37 +286,20 @@ header h1 {
   font-size: clamp(1.8rem, 4vw, 2.4rem);
   font-weight: 800;
   letter-spacing: 0.06em;
-  color: var(--color-primary);
+  color: var(--color-text);
+}
+
+@media (width >= 1024px) {
+  .brand-title {
+    font-size: clamp(2.16rem, 4.8vw, 2.88rem);
+    line-height: 1;
+  }
 }
 
 @media (width < 600px) {
   .brand-title {
-    font-size: 1.9rem;
-  }
-}
-
-.wedraw-corner {
-  position: fixed;
-  right: 0.9rem;
-  bottom: 0.9rem;
-  z-index: 20;
-  opacity: 0.9;
-}
-
-.wedraw-corner-logo {
-  width: 72px;
-  height: auto;
-  display: block;
-}
-
-@media (width < 600px) {
-  .wedraw-corner {
-    right: 0.75rem;
-    bottom: 0.75rem;
-  }
-
-  .wedraw-corner-logo {
-    width: 60px;
+    font-size: 3.8rem;
+    line-height: 1;
   }
 }
 
@@ -297,7 +333,13 @@ footer ul {
   display: flex;
   gap: 0.6em;
   align-items: center;
-  justify-content: space-around;
+  justify-content: center;
+}
+
+.wedraw-footer-logo {
+  width: 88px;
+  height: auto;
+  display: block;
 }
 
 /* ── Controls ────────────────────────────────────────────── */
@@ -331,13 +373,8 @@ footer ul {
   margin-right: auto;
 }
 
-/* Spacing between every control-row combination */
-.toggle-wrapper        + .range-input-wrapper,
-.toggle-wrapper        + .stepper-input-wrapper,
-.range-input-wrapper   + .range-input-wrapper,
-.range-input-wrapper   + .stepper-input-wrapper,
-.stepper-input-wrapper + .range-input-wrapper,
-.stepper-input-wrapper + .stepper-input-wrapper {
+/* Spacing between control rows */
+#controls > * + * {
   padding-top: var(--control-gap);
 }
 
@@ -389,8 +426,122 @@ footer ul {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
 
+
+.levels-control label {
+  margin-right: 0;
+}
+
+.box-extra-toggle {
+  width: 1.65em;
+  height: 1.65em;
+  flex: 0 0 1.65em;
+  margin-right: auto;
+  padding: 0;
+  border: 1px solid var(--color-neutral-light);
+  border-radius: 999px;
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  font-family: var(--font-sans);
+  font-size: 1.05em;
+  font-weight: 600;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+
+.box-extra-toggle:hover {
+  color: var(--color-primary);
+  border-color: var(--color-neutral);
+}
+
+.box-extra-panel {
+  margin-left: 0;
+  padding-top: 0 !important;
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-0.35em);
+  overflow: hidden;
+  transition:
+    max-height 220ms ease,
+    opacity 180ms ease,
+    transform 220ms ease,
+    margin-top 220ms ease;
+}
+
+.box-extra-panel.is-open {
+  max-height: 5.2em;
+  opacity: 1;
+  transform: translateY(0);
+  padding-top: var(--control-gap) !important;
+}
+
+.box-extra-panel .range-input-wrapper label {
+  min-width: var(--label-width);
+  font-size: 0.9em;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.box-extra-panel .range-input-value input {
+  color: var(--color-text-muted);
+}
+
+.grid-input-wrapper {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 1em;
+}
+
+.grid-input-wrapper > label {
+  min-width: var(--label-width);
+  flex-shrink: 0;
+  font-weight: 500;
+  font-size: 0.95em;
+}
+
+.grid-input-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4em;
+  margin-left: auto;
+  min-width: 6.2em;
+  justify-content: flex-end;
+}
+
+.grid-input-value input {
+  width: 2.4em;
+  padding: 0;
+  text-align: center;
+  font-size: 1.2em;
+  border: 0;
+  background: transparent;
+  color: var(--color-text);
+  font-weight: 600;
+  font-family: var(--font-sans);
+  -moz-appearance: textfield;
+}
+
+.grid-input-value input::-webkit-outer-spin-button,
+.grid-input-value input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.grid-input-value input:focus {
+  outline: none;
+}
+
+.grid-input-sep {
+  color: var(--color-text-muted);
+  font-weight: 700;
+  font-size: 0.92em;
+}
+
 /* Range */
-.range-input-wrapper input[type="number"]::selection {
+#controls input[type="number"]::selection {
   background-color: var(--color-accent-light);
 }
 
@@ -627,19 +778,20 @@ footer ul {
   padding: 0.85em 1em;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: #fff;
-  background: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-surface);
   font-size: 1em;
   font-weight: 700;
   font-family: var(--font-sans);
   border-radius: var(--radius-md);
-  border: 2px solid transparent;
-  transition: background 0.15s, border-color 0.15s;
+  border: 2px solid var(--color-primary);
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
 }
 
 #download:hover {
-  background: var(--color-primary-hover);
-  border-color: var(--color-primary-hover);
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: #fff;
 }
 
 #download,
@@ -659,41 +811,166 @@ footer ul {
   flex: 1;
 }
 
-#print-now {
+#add-to-order {
   flex: 1;
   display: block;
   text-align: center;
   padding: 0.85em 1em;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  color: var(--color-primary);
-  background: var(--color-surface);
+  color: #fff;
+  background: var(--color-primary);
   font-size: 1em;
   font-weight: 700;
   font-family: var(--font-sans);
   border-radius: var(--radius-md);
-  border: 2px solid var(--color-primary);
+  border: 2px solid transparent;
   cursor: pointer;
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
-#print-now:hover {
-  background: var(--color-primary);
+#add-to-order:hover {
+  background: var(--color-primary-hover);
   color: #fff;
-  border-color: var(--color-primary);
+  border-color: var(--color-primary-hover);
 }
 
-#print-now:disabled {
+#add-to-order:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-#print-now.submitting {
-  opacity: 0.7;
-  cursor: wait;
+/* Order Sheet */
+.order-sheet {
+  margin-top: 1em;
+  padding: 1em;
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  border: 1px solid var(--color-neutral-light);
+  border-top: 3px solid var(--color-text);
 }
 
-/* Job Status Panel */
+.order-sheet-title {
+  margin: 0;
+  font-size: 0.9em;
+  font-weight: 700;
+  color: var(--color-text);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.order-items {
+  list-style: none;
+  margin: 0.75em 0 1em;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: 11.5em;
+  overflow-y: auto;
+  border-top: 1px dashed var(--color-neutral);
+  border-bottom: 1px dashed var(--color-neutral);
+}
+
+.order-item {
+  display: grid;
+  grid-template-columns: auto 1fr 3.2em auto;
+  gap: 0.5em;
+  align-items: center;
+  border-bottom: 1px dashed var(--color-neutral-light);
+  padding: 0.55em 0.2em;
+}
+
+.order-item:last-child {
+  border-bottom: none;
+}
+
+.order-item-index {
+  min-width: 1.6em;
+  text-align: center;
+  font-size: 0.8em;
+  font-weight: 700;
+  color: var(--color-text-muted);
+}
+
+.order-item-label {
+  font-size: 0.85em;
+  color: var(--color-text);
+  line-height: 1.35;
+}
+
+.order-item-qty {
+  font-size: 0.82em;
+  color: var(--color-text-muted);
+  min-width: 0;
+  text-align: center;
+  justify-self: center;
+  font-weight: 600;
+}
+
+.order-item-remove {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--color-text-muted);
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: 1em;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+  width: 1.7em;
+  height: 1.7em;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.order-item-remove:hover {
+  color: var(--color-text);
+  border-color: var(--color-neutral-light);
+}
+
+.order-items-empty {
+  font-size: 0.85em;
+  color: var(--color-text-muted);
+  padding: 0.9em 0.2em;
+}
+
+#place-order {
+  width: 100%;
+  text-align: center;
+  padding: 0.85em 1em;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #fff;
+  background: var(--color-primary);
+  font-size: 0.95em;
+  font-weight: 700;
+  font-family: var(--font-sans);
+  border-radius: var(--radius-md);
+  border: 2px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+
+@media (width < 600px) {
+  .order-items {
+    max-height: 9.5em;
+  }
+}
+
+#place-order:hover:not(:disabled) {
+  background: var(--color-primary-hover);
+  border-color: var(--color-primary-hover);
+}
+
+#place-order:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* Legacy Job Status (kept for compatibility with old markup if present) */
 .job-status {
   margin-top: 1em;
   padding: 1em;
