@@ -38,9 +38,7 @@ const START_BOTTOM = 3;
 
 const START_COLS = 2;
 const START_ROWS = 2;
-const MIN_COLS = 1;
 const MAX_COLS = 8;
-const MIN_ROWS = 1;
 const MAX_ROWS = 8;
 
 const START_HEIGHT = 52; /* calculated manually from START_LEVELS */
@@ -205,7 +203,7 @@ const filenameForSnapshot = (snapshot: ModelSnapshot) =>
 
 const labelForSnapshot = (snapshot: ModelSnapshot) =>
   snapshot.shape === "organizer"
-    ? `PÅLÄGG Organizer ${snapshot.width}×${snapshot.depth}×${snapshot.height} (${snapshot.cols + 1}X${snapshot.rows + 1})`
+    ? `PÅLÄGG Grid ${snapshot.width}×${snapshot.depth}×${snapshot.height} (${snapshot.cols + 1}X${snapshot.rows + 1})`
     : `PÅLÄGG Box ${snapshot.width}×${snapshot.depth}×${snapshot.height}`;
 
 // Reloads the model seen on page
@@ -581,18 +579,20 @@ const depthControl = rangeControl("depth", {
 });
 controls.append(depthControl.wrapper);
 
-// Organizer-only control (Grid: Cols X Rows)
-const gridControl = document.createElement("div");
-gridControl.className = "grid-input-wrapper";
-gridControl.innerHTML = `
-  <label for="grid-cols">Grid</label>
-  <div class="grid-input-value">
-    <input type="number" id="grid-cols" min="${MIN_COLS + 1}" max="${MAX_COLS + 1}" aria-label="Grid columns" />
-    <span class="grid-input-sep">X</span>
-    <input type="number" id="grid-rows" min="${MIN_ROWS}" max="${MAX_ROWS + 1}" aria-label="Grid rows" />
-  </div>
-`;
-controls.append(gridControl);
+// Organizer-only controls (Row / Column steppers)
+const rowsControl = stepper("grid-rows", {
+  label: "Row",
+  min: "1",
+  max: String(MAX_ROWS + 1),
+});
+controls.append(rowsControl);
+
+const colsControl = stepper("grid-cols", {
+  label: "Column",
+  min: "1",
+  max: String(MAX_COLS + 1),
+});
+controls.append(colsControl);
 
 // The dimension inputs
 const inputs = {
@@ -606,7 +606,11 @@ const inputs = {
   depth: depthControl.input,
   depthRange: depthControl.range,
   cols: document.querySelector("#grid-cols")! as HTMLInputElement,
+  colsPlus: document.querySelector("#grid-cols-plus")! as HTMLButtonElement,
+  colsMinus: document.querySelector("#grid-cols-minus")! as HTMLButtonElement,
   rows: document.querySelector("#grid-rows")! as HTMLInputElement,
+  rowsPlus: document.querySelector("#grid-rows-plus")! as HTMLButtonElement,
+  rowsMinus: document.querySelector("#grid-rows-minus")! as HTMLButtonElement,
 } as const;
 
 // Add change events to all dimension inputs
@@ -702,7 +706,7 @@ shapeType.addListener(() => {
 });
 
 // Show/hide controls based on shape
-const orgOnlyEls: HTMLElement[] = [gridControl];
+const orgOnlyEls: HTMLElement[] = [rowsControl, colsControl];
 
 shapeType.addListener((shape) => {
   orgOnlyEls.forEach(
@@ -710,28 +714,64 @@ shapeType.addListener((shape) => {
   );
 });
 
-// cols
+// cols (internal 0 = display 1; at least one of cols/rows must be ≥ 1 internal)
 ([[inputs.cols, "change"]] as const).forEach(([input, evnt]) => {
   cols.addListener((c) => {
     input.value = `${c + 1}`;
   });
   input.addEventListener(evnt, () => {
     const n = parseInt(input.value);
-    if (!Number.isNaN(n))
-      cols.send(Math.max(MIN_COLS, Math.min(n - 1, MAX_COLS)));
+    if (!Number.isNaN(n)) {
+      const c = Math.max(0, Math.min(n - 1, MAX_COLS));
+      if (c === 0 && rows.latest === 0) rows.send(1);
+      cols.send(c);
+    }
   });
 });
 
-// rows
+// rows (same mutual constraint)
 ([[inputs.rows, "change"]] as const).forEach(([input, evnt]) => {
   rows.addListener((r) => {
     input.value = `${r + 1}`;
   });
   input.addEventListener(evnt, () => {
     const n = parseInt(input.value);
-    if (!Number.isNaN(n))
-      rows.send(Math.max(MIN_ROWS - 1, Math.min(n - 1, MAX_ROWS)));
+    if (!Number.isNaN(n)) {
+      const r = Math.max(0, Math.min(n - 1, MAX_ROWS));
+      if (r === 0 && cols.latest === 0) cols.send(1);
+      rows.send(r);
+    }
   });
+});
+
+// Grid stepper buttons (enforce: cols + rows ≥ 1 internal, i.e. no 1×1 grid)
+inputs.colsPlus.addEventListener("click", () => {
+  cols.send(Math.min(cols.latest + 1, MAX_COLS));
+});
+inputs.colsMinus.addEventListener("click", () => {
+  const c = cols.latest - 1;
+  if (c < 0) return;
+  if (c === 0 && rows.latest === 0) rows.send(1);
+  cols.send(c);
+});
+inputs.rowsPlus.addEventListener("click", () => {
+  rows.send(Math.min(rows.latest + 1, MAX_ROWS));
+});
+inputs.rowsMinus.addEventListener("click", () => {
+  const r = rows.latest - 1;
+  if (r < 0) return;
+  if (r === 0 && cols.latest === 0) cols.send(1);
+  rows.send(r);
+});
+
+// Disable buttons at boundaries
+cols.addListener((c) => {
+  inputs.colsMinus.disabled = c <= 0;
+  inputs.colsPlus.disabled = c >= MAX_COLS;
+});
+rows.addListener((r) => {
+  inputs.rowsMinus.disabled = r <= 0;
+  inputs.rowsPlus.disabled = r >= MAX_ROWS;
 });
 
 // Add select-all on input click
