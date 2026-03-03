@@ -503,8 +503,7 @@ link.appendChild(quotaContainer);
 let quotaTimerId: ReturnType<typeof setInterval> | undefined;
 
 const updatePlaceOrderDisabled = () => {
-  placeOrderButton.disabled =
-    orderLines.length === 0 || remainingQuota() <= 0;
+  placeOrderButton.disabled = orderLines.length === 0;
 };
 
 const refreshQuotaUI = () => {
@@ -878,16 +877,9 @@ function openIconSearchModal(): Promise<import("./model/emoji").EmojiPreset | nu
 
 const downloadOrderAs3MF = async () => {
   if (orderLines.length === 0) return;
-  if (remainingQuota() <= 0) return;
 
   const orderName = await promptOrderName();
   if (orderName === null) return;
-
-  if (!recordDownload()) {
-    refreshQuotaUI();
-    return;
-  }
-  refreshQuotaUI();
 
   placeOrderButton.disabled = true;
   placeOrderButton.textContent = "주문 파일 생성 중...";
