@@ -20,6 +20,3 @@ export function saveCustomIcon(preset: EmojiPreset): void {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(icons));
 }
 
-export function isCustomIcon(id: string): boolean {
-  return id.startsWith("iconify:");
-}

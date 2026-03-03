@@ -17,11 +17,6 @@ type Animation = {
 // use b & c in the implementation to keep them in line with Penner's definitions.
 type EasingFunction = (t: number, b: number, c: number, d: number) => number;
 
-export const easeInOutCubic: EasingFunction = (t, b, c, d) => {
-  if ((t /= d / 2) < 1) return (c / 2) * t * t * t + b;
-  return (c / 2) * ((t -= 2) * t * t + 2) + b;
-};
-
 // cubic easing out - decelerating to zero velocity
 export const easeOutCubic: EasingFunction = (t, b, c, d) => {
   return c * ((t = t / d - 1) * t * t + 1) + b;

@@ -1,9 +1,9 @@
 import * as THREE from "three";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 
-import { RenderOutlinePass } from "./effects/outline";
-import { ThickenPass } from "./effects/thicken";
-import { FXAAPass } from "./effects/antialiasing";
+import { WdEdgePass } from "./effects/outline";
+import { WdStrokePass } from "./effects/thicken";
+import { WdSmoothPass } from "./effects/antialiasing";
 import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 
 export class Renderer {
@@ -19,11 +19,11 @@ export class Renderer {
   public canvasWidth: number;
   public canvasHeight: number;
 
-  public thickenPass: ThickenPass;
-  public outlinePass: RenderOutlinePass;
+  public strokePass: WdStrokePass;
+  public edgePass: WdEdgePass;
 
   /* Get the pixel color at position (input should be element's offsetX/Y coords) */
-  getCanvasPixelColor(pos: [number, number]): [number, number, number, number] {
+  readPixel(pos: [number, number]): [number, number, number, number] {
     const rt = this.composer.writeBuffer;
     const [x, y] = [
       pos[0] * window.devicePixelRatio,
@@ -64,20 +64,20 @@ export class Renderer {
 
     // Passes
 
-    this.outlinePass = new RenderOutlinePass(
+    this.edgePass = new WdEdgePass(
       this.scene,
       this.camera,
       canvas.clientWidth,
       canvas.clientHeight,
     );
-    this.composer.addPass(this.outlinePass);
+    this.composer.addPass(this.edgePass);
 
-    const thickenPass = new ThickenPass(
+    const strokePass = new WdStrokePass(
       canvas.clientWidth,
       canvas.clientHeight,
     );
-    this.thickenPass = thickenPass;
-    this.composer.addPass(thickenPass);
+    this.strokePass = strokePass;
+    this.composer.addPass(strokePass);
 
     // By default, EffectComposer has an implicit rendering pass at the end.
     // However here we perform the OutputPass explicitly so that we can
@@ -85,7 +85,7 @@ export class Renderer {
     const outputPass = new OutputPass();
     this.composer.addPass(outputPass);
 
-    const fxaaPass = new FXAAPass();
+    const fxaaPass = new WdSmoothPass();
     this.composer.addPass(fxaaPass);
   }
 
@@ -204,7 +204,7 @@ export class Renderer {
     const height = top - bottom;
     const maxDim = Math.sqrt(width * width + height * height);
     // The camera was moved/updated, so recompute the thickness of the outline
-    this.thickenPass.setThickness((150 * window.devicePixelRatio) / maxDim);
+    this.strokePass.setThickness((150 * window.devicePixelRatio) / maxDim);
   }
 
   render() {
@@ -236,7 +236,6 @@ const computeProjectedBounds = (
   let [bottom, top] = [Infinity, -Infinity];
   let [near, far] = [Infinity, -Infinity];
 
-  // See https://github.com/nmattia/palagg/wiki/Camera-centering
   const c = camera.position;
   const n = new THREE.Vector3();
   camera.getWorldDirection(n);

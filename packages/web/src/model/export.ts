@@ -40,7 +40,7 @@ interface Header {
   modificationDate?: string;
 }
 
-export function exportManifoldBytes(manifold: Manifold): Uint8Array {
+function exportManifoldBytes(manifold: Manifold): Uint8Array {
   const manifoldMesh = manifold.getMesh();
 
   const vertices =

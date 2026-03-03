@@ -4,7 +4,7 @@ import vertexShader from "./vert.glsl?raw";
 import fragmentShader from "./frag.glsl?raw";
 
 /// A rendering pass that thickens black pixels.
-export class ThickenPass extends Pass {
+export class WdStrokePass extends Pass {
   private fsQuad: FullScreenQuad;
 
   private thickenMaterial: THREE.ShaderMaterial;

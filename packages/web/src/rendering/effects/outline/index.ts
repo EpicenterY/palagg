@@ -3,7 +3,7 @@ import { Pass, FullScreenQuad } from "three/addons/postprocessing/Pass.js";
 import vertexShader from "./vert.glsl?raw";
 import fragmentShader from "./frag.glsl?raw";
 
-export class RenderOutlinePass extends Pass {
+export class WdEdgePass extends Pass {
   private normalMaterial: THREE.MeshNormalMaterial;
   private fillMaterial: THREE.MeshBasicMaterial;
   private depthOnlyMaterial: THREE.MeshBasicMaterial;

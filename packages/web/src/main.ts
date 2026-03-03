@@ -1189,7 +1189,7 @@ shapeControl.inputs.forEach((input) => {
 shapeType.addListener((shape) => {
   reloadModelNeeded = true;
   // Toggle fill pass: only needed for tag text rendering (saves 2 scene renders/frame)
-  renderer.outlinePass.fillEnabled = shape === "tag";
+  renderer.edgePass.fillEnabled = shape === "tag";
   if (shape === "tag") {
     partPositioning.send({ tag: "static", position: 1 });
     if (tagFirstVisit) {
@@ -1434,7 +1434,7 @@ const readyMouse = (e: MouseEvent | TouchEvent) => {
   renderer.render();
 
   const [x, y] = eventCoords(e);
-  const [r, g, b, a] = renderer.getCanvasPixelColor([x, y]);
+  const [r, g, b, a] = renderer.readPixel([x, y]);
 
   // The outline rendering renders transparent pixels outside of the part
   // So if it's transparent, assume the user didn't want to touch/rotate the part
