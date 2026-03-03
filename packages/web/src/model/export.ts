@@ -202,13 +202,14 @@ export function mesh2geometry(manifold: Manifold): THREE.BufferGeometry {
   const mesh = manifold.getMesh();
   const geometry = new THREE.BufferGeometry();
   const verts: Float32Array = new Float32Array(3 * mesh.triVerts.length);
+  const np = mesh.numProp;
 
   // List the indices, and for each copy the original vertex.
   // Non-indexed geometry so each face owns its vertices independently.
   mesh.triVerts.forEach((ix, i) => {
-    verts[3 * i + 0] = mesh.vertProperties[3 * ix + 0];
-    verts[3 * i + 1] = mesh.vertProperties[3 * ix + 1];
-    verts[3 * i + 2] = mesh.vertProperties[3 * ix + 2];
+    verts[3 * i + 0] = mesh.vertProperties[np * ix + 0];
+    verts[3 * i + 1] = mesh.vertProperties[np * ix + 1];
+    verts[3 * i + 2] = mesh.vertProperties[np * ix + 2];
   });
 
   geometry.setAttribute("position", new THREE.BufferAttribute(verts, 3));

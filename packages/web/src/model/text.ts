@@ -183,6 +183,8 @@ function parseSvgPath(d: string): Vec2[][] {
   let current: Vec2[] = [];
   let cursor: Vec2 = [0, 0];
   let startPoint: Vec2 = [0, 0];
+  let lastC2: Vec2 | null = null; // last cubic control point for S/s
+  let lastQ1: Vec2 | null = null; // last quadratic control point for T/t
 
   // Tokenize: split into commands and numbers
   const tokens = d.match(/[MmLlHhVvCcSsQqTtAaZz]|[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?/g);
@@ -195,13 +197,16 @@ function parseSvgPath(d: string): Vec2[][] {
     const cmd = tokens[i];
     if (/^[MmLlHhVvCcSsQqTtAaZz]$/.test(cmd)) {
       i++;
+      // Reset control points for non-curve commands
+      if (!"CcSs".includes(cmd)) lastC2 = null;
+      if (!"QqTt".includes(cmd)) lastQ1 = null;
+
       switch (cmd) {
         case "M":
           if (current.length > 0) contours.push(current);
           cursor = [num(), num()];
           startPoint = cursor;
           current = [cursor];
-          // Implicit L after M
           while (i < tokens.length && /^[-+.\d]/.test(tokens[i])) {
             cursor = [num(), num()];
             current.push(cursor);
@@ -259,6 +264,7 @@ function parseSvgPath(d: string): Vec2[][] {
             const c2: Vec2 = [num(), num()];
             const end: Vec2 = [num(), num()];
             current.push(...tessellateCubic(cursor, c1, c2, end, BEZIER_SEGMENTS));
+            lastC2 = c2;
             cursor = end;
           }
           break;
@@ -268,6 +274,31 @@ function parseSvgPath(d: string): Vec2[][] {
             const c2: Vec2 = [cursor[0] + num(), cursor[1] + num()];
             const end: Vec2 = [cursor[0] + num(), cursor[1] + num()];
             current.push(...tessellateCubic(cursor, c1, c2, end, BEZIER_SEGMENTS));
+            lastC2 = c2;
+            cursor = end;
+          }
+          break;
+        case "S":
+          while (i < tokens.length && /^[-+.\d]/.test(tokens[i])) {
+            const c1: Vec2 = lastC2
+              ? [2 * cursor[0] - lastC2[0], 2 * cursor[1] - lastC2[1]]
+              : cursor;
+            const c2: Vec2 = [num(), num()];
+            const end: Vec2 = [num(), num()];
+            current.push(...tessellateCubic(cursor, c1, c2, end, BEZIER_SEGMENTS));
+            lastC2 = c2;
+            cursor = end;
+          }
+          break;
+        case "s":
+          while (i < tokens.length && /^[-+.\d]/.test(tokens[i])) {
+            const c1: Vec2 = lastC2
+              ? [2 * cursor[0] - lastC2[0], 2 * cursor[1] - lastC2[1]]
+              : cursor;
+            const c2: Vec2 = [cursor[0] + num(), cursor[1] + num()];
+            const end: Vec2 = [cursor[0] + num(), cursor[1] + num()];
+            current.push(...tessellateCubic(cursor, c1, c2, end, BEZIER_SEGMENTS));
+            lastC2 = c2;
             cursor = end;
           }
           break;
@@ -276,6 +307,7 @@ function parseSvgPath(d: string): Vec2[][] {
             const c1: Vec2 = [num(), num()];
             const end: Vec2 = [num(), num()];
             current.push(...tessellateQuadratic(cursor, c1, end, BEZIER_SEGMENTS));
+            lastQ1 = c1;
             cursor = end;
           }
           break;
@@ -284,17 +316,47 @@ function parseSvgPath(d: string): Vec2[][] {
             const c1: Vec2 = [cursor[0] + num(), cursor[1] + num()];
             const end: Vec2 = [cursor[0] + num(), cursor[1] + num()];
             current.push(...tessellateQuadratic(cursor, c1, end, BEZIER_SEGMENTS));
+            lastQ1 = c1;
+            cursor = end;
+          }
+          break;
+        case "T":
+          while (i < tokens.length && /^[-+.\d]/.test(tokens[i])) {
+            const c1: Vec2 = lastQ1
+              ? [2 * cursor[0] - lastQ1[0], 2 * cursor[1] - lastQ1[1]]
+              : cursor;
+            const end: Vec2 = [num(), num()];
+            current.push(...tessellateQuadratic(cursor, c1, end, BEZIER_SEGMENTS));
+            lastQ1 = c1;
+            cursor = end;
+          }
+          break;
+        case "t":
+          while (i < tokens.length && /^[-+.\d]/.test(tokens[i])) {
+            const c1: Vec2 = lastQ1
+              ? [2 * cursor[0] - lastQ1[0], 2 * cursor[1] - lastQ1[1]]
+              : cursor;
+            const end: Vec2 = [cursor[0] + num(), cursor[1] + num()];
+            current.push(...tessellateQuadratic(cursor, c1, end, BEZIER_SEGMENTS));
+            lastQ1 = c1;
             cursor = end;
           }
           break;
         case "Z":
         case "z":
+          // Remove trailing duplicate of start point (zero-length closing edge)
+          if (
+            current.length > 1 &&
+            current[current.length - 1][0] === current[0][0] &&
+            current[current.length - 1][1] === current[0][1]
+          ) {
+            current.pop();
+          }
           if (current.length > 0) contours.push(current);
           current = [];
           cursor = startPoint;
           break;
         default:
-          // Skip unsupported commands (S, s, T, t, A, a)
           break;
       }
     } else {
