@@ -4,11 +4,13 @@ import * as THREE from "three";
 import { Renderer } from "./rendering/renderer";
 
 import { CLIP_HEIGHT, box, drawerOrganizer } from "./model/manifold";
-import { exportManifold, exportManifoldBytes, exportTagParts, mesh2geometry } from "./model/export";
+import { exportManifold, exportMultiBodyManifold, mesh2geometry } from "./model/export";
+import type { MultiBodyPart } from "./model/export";
 import { TMFLoader } from "./model/load";
 import { Animate, immediate } from "./animate";
 import { zipSync } from "fflate";
-import { tagBody, tagTextPlate, tagPreview, TAG_DEFAULT_WIDTH, TAG_MIN_WIDTH, TAG_MAX_WIDTH } from "./model/tag";
+import { tagClipBase, tagTextPlate, tagPreview, TAG_DEFAULT_WIDTH, TAG_MIN_WIDTH, TAG_MAX_WIDTH, TAG_MAX_TEXT_CONTENT_WIDTH, TAG_TEXT_AREA_HEIGHT } from "./model/tag";
+import { measureTextWidth } from "./model/text";
 import { EMOJI_PRESETS } from "./model/emoji";
 
 import { Dyn } from "twrl";
@@ -80,6 +82,7 @@ const tagText = new Dyn<string>("");
 const tagEmoji = new Dyn<string | null>(null);
 const tagWidth = new Dyn(TAG_DEFAULT_WIDTH);
 let tagTextDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+let tagFirstVisit = true;
 
 const baseHeight = levels.map(
   (x) => x * CLIP_HEIGHT + (x - 1) * (40 - CLIP_HEIGHT),
@@ -187,9 +190,10 @@ const buildSnapshot = (): ModelSnapshot => ({
   tagEmoji: tagEmoji.latest,
 });
 
-const modelForSnapshot = (snapshot: ModelSnapshot) => {
+const modelForSnapshot = async (snapshot: ModelSnapshot) => {
   if (snapshot.shape === "tag") {
-    return tagPreview(snapshot.width, snapshot.tagText, snapshot.tagEmoji);
+    const { preview } = await tagPreview(snapshot.width, snapshot.tagText, snapshot.tagEmoji);
+    return preview;
   }
   return snapshot.shape === "organizer"
     ? drawerOrganizer(
@@ -215,7 +219,13 @@ const modelForSnapshot = (snapshot: ModelSnapshot) => {
 };
 
 const filenameForSnapshot = (snapshot: ModelSnapshot) => {
-  if (snapshot.shape === "tag") return `palagg-tag-${snapshot.width}`;
+  if (snapshot.shape === "tag") {
+    const content = snapshot.tagEmoji
+      ? snapshot.tagEmoji
+      : snapshot.tagText.trim() || "blank";
+    const safeName = content.replace(/[^a-zA-Z0-9_-]/g, "");
+    return `palagg-tag-${snapshot.width}-${safeName || "text"}`;
+  }
   return snapshot.shape === "organizer"
     ? `palagg-organizer-${snapshot.width}-${snapshot.depth}-${snapshot.height}.3mf`
     : `palagg-${snapshot.width}-${snapshot.depth}-${snapshot.height}.3mf`;
@@ -247,8 +257,20 @@ async function reloadModel(
   ro: number,
 ) {
   let model;
+  let tagTextFill: import("manifold-3d").Manifold | null = null;
+
   if (shape === "tag") {
-    model = await tagPreview(tagWidthAnimation.current, tagText.latest, tagEmoji.latest);
+    // Capture the width before await — animation.current changes during async build
+    const usedWidth = tagWidthAnimation.current;
+    const result = await tagPreview(usedWidth, tagText.latest, tagEmoji.latest);
+    model = result.preview;
+    tagTextFill = result.textFill;
+    // Sync width slider only when text genuinely forces the plate wider.
+    // tagTextPlate applies Math.ceil, so small (<1mm) differences are just rounding.
+    // Only sync when the model had to widen beyond what was requested.
+    if (result.actualWidth > usedWidth + 1) {
+      tagWidth.send(Math.round(result.actualWidth));
+    }
   } else if (shape === "organizer") {
     model = await drawerOrganizer(
       height,
@@ -273,9 +295,18 @@ async function reloadModel(
     );
   }
   const geometry = mesh2geometry(model);
-  geometry.computeVertexNormals(); // Make sure the geometry has normals
+  geometry.computeVertexNormals();
   mesh.geometry = geometry;
-  mesh.clear(); // Remove all children
+  mesh.clear();
+
+  // Add text fill as a separate child mesh on layer 1 (rendered as black by fill pass)
+  if (tagTextFill) {
+    const textGeom = mesh2geometry(tagTextFill);
+    textGeom.computeVertexNormals();
+    const textMesh = new THREE.Mesh(textGeom);
+    textMesh.layers.enable(1);
+    mesh.add(textMesh);
+  }
 }
 
 // when target dimensions are changed, update the model to download
@@ -427,7 +458,7 @@ let orderZipUrl: string | undefined;
 let tagDownloadUrl: string | undefined;
 
 // Update download button text for tag mode
-shapeType.addListener((shape) => {
+shapeType.addListener((_shape) => {
   link.textContent = "3MF 다운로드";
 });
 
@@ -438,16 +469,24 @@ link.addEventListener("click", async (e) => {
 
   const snapshot = buildSnapshot();
   const baseName = filenameForSnapshot(snapshot);
-  const body = await tagBody(snapshot.width);
-  const plate = await tagTextPlate(snapshot.width, snapshot.tagText, snapshot.tagEmoji);
-  const blob = exportTagParts(body, plate, baseName);
+  const { plate, textFill, actualWidth } = await tagTextPlate(snapshot.width, snapshot.tagText, snapshot.tagEmoji);
+  const clipBase = await tagClipBase(actualWidth);
+
+  const bodies: MultiBodyPart[] = [
+    { manifold: clipBase, name: "clip-base" },
+    { manifold: plate, name: "plate" },
+  ];
+  if (textFill) {
+    bodies.push({ manifold: textFill, name: "text" });
+  }
+  const blob = exportMultiBodyManifold(bodies);
 
   if (tagDownloadUrl) URL.revokeObjectURL(tagDownloadUrl);
   tagDownloadUrl = URL.createObjectURL(blob);
 
   const tempLink = document.createElement("a");
   tempLink.href = tagDownloadUrl;
-  tempLink.download = `${baseName}.zip`;
+  tempLink.download = `${baseName}.3mf`;
   tempLink.click();
 });
 
@@ -506,18 +545,25 @@ const downloadOrderAsZip = async () => {
     const filenameCounts = new Map<string, number>();
     for (const line of orderLines) {
       if (line.snapshot.shape === "tag") {
-        // Tag: export body + plate as separate 3mf files
-        const body = await tagBody(line.snapshot.width);
-        const plate = await tagTextPlate(line.snapshot.width, line.snapshot.tagText, line.snapshot.tagEmoji);
-        const bodyBytes = exportManifoldBytes(body);
-        const plateBytes = exportManifoldBytes(plate);
+        // Tag: export as single multi-body 3MF
+        const { plate, textFill, actualWidth } = await tagTextPlate(line.snapshot.width, line.snapshot.tagText, line.snapshot.tagEmoji);
+        const clipBase = await tagClipBase(actualWidth);
+
+        const bodies: MultiBodyPart[] = [
+          { manifold: clipBase, name: "clip-base" },
+          { manifold: plate, name: "plate" },
+        ];
+        if (textFill) {
+          bodies.push({ manifold: textFill, name: "text" });
+        }
+        const tagBlob = exportMultiBodyManifold(bodies);
+        const tagBytes = new Uint8Array(await tagBlob.arrayBuffer());
 
         for (let i = 0; i < line.quantity; i++) {
           const count = (filenameCounts.get(line.filename) ?? 0) + 1;
           filenameCounts.set(line.filename, count);
           const suffix = count === 1 ? "" : `-${count}`;
-          files[`${line.filename}${suffix}-body.3mf`] = bodyBytes;
-          files[`${line.filename}${suffix}-plate.3mf`] = plateBytes;
+          files[`${line.filename}${suffix}.3mf`] = tagBytes;
         }
       } else {
         const model = await modelForSnapshot(line.snapshot);
@@ -809,8 +855,15 @@ shapeControl.inputs.forEach((input) => {
   });
 });
 
-shapeType.addListener(() => {
+shapeType.addListener((shape) => {
   reloadModelNeeded = true;
+  if (shape === "tag") {
+    partPositioning.send({ tag: "static", position: 1 });
+    if (tagFirstVisit) {
+      tagFirstVisit = false;
+      tagEmoji.send("wedraw");
+    }
+  }
 });
 
 // Show/hide controls based on shape
@@ -890,13 +943,39 @@ rows.addListener((r) => {
   inputs.rowsPlus.disabled = r >= MAX_ROWS;
 });
 
-// Tag text input
+// Tag text input — validate width limit and update remaining counter
+let lastValidTagText = "";
+
+async function updateTagTextCounter(text: string) {
+  if (!text.trim()) {
+    tagTextControl.counter.textContent = "";
+    tagTextControl.counter.classList.remove("at-limit");
+    return;
+  }
+  const textW = await measureTextWidth(text, TAG_TEXT_AREA_HEIGHT);
+  const remaining = TAG_MAX_TEXT_CONTENT_WIDTH - textW;
+  // Estimate remaining chars from average character width
+  const avgCharW = textW / text.length;
+  const remainingChars = Math.max(0, Math.floor(remaining / avgCharW));
+  tagTextControl.counter.textContent = `${remainingChars}`;
+  tagTextControl.counter.classList.toggle("at-limit", remainingChars <= 0);
+}
+
 tagTextControl.input.addEventListener("input", () => {
   const text = tagTextControl.input.value;
   // Debounce text changes to avoid excessive model reloads
   clearTimeout(tagTextDebounceTimer);
-  tagTextDebounceTimer = setTimeout(() => {
+  tagTextDebounceTimer = setTimeout(async () => {
+    const textW = await measureTextWidth(text, TAG_TEXT_AREA_HEIGHT);
+    if (textW > TAG_MAX_TEXT_CONTENT_WIDTH && text.length > lastValidTagText.length) {
+      // Revert to last valid text
+      tagTextControl.input.value = lastValidTagText;
+      updateTagTextCounter(lastValidTagText);
+      return;
+    }
+    lastValidTagText = text;
     tagText.send(text);
+    updateTagTextCounter(text);
   }, 300);
 });
 
@@ -929,6 +1008,9 @@ tagEmojiControl.buttons.forEach((btn) => {
       // Clear text when emoji is selected
       tagText.send("");
       tagTextControl.input.value = "";
+      lastValidTagText = "";
+      tagTextControl.counter.textContent = "";
+      tagTextControl.counter.classList.remove("at-limit");
     }
   });
 });

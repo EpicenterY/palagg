@@ -4,6 +4,7 @@
 varying vec2 vUv; // (x,y) with x,y in [0,1]
 uniform sampler2D tNormal;
 uniform sampler2D tDepth;
+uniform sampler2D tFill;
 uniform vec2 texelSize;
 
 /* Both the depth & normal checks use a Sobel operator, which
@@ -72,10 +73,17 @@ float computeEdgeNormal() {
 }
 
 void main() {
+    // Fill mask: regions that should be rendered as solid black (e.g. text)
+    float fillMask = texture(tFill, vUv).r;
+    if (fillMask > 0.5) {
+        gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0);
+        return;
+    }
+
     float edgeDepth = computeEdgeDepth();
     float edgeNormal = computeEdgeNormal();
 
-    float edge = step(.25, max(edgeDepth, edgeNormal));
+    float edge = step(.15, max(edgeDepth, edgeNormal));
     float depth = texture(tDepth, vUv).x;
 
     // Make alpha transparent if depth == 1 (hitting far plane) UNLESS

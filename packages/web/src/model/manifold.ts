@@ -31,7 +31,7 @@ function generateArc({
   radius: number;
 }): Vec2[] {
   // Number of segments (total points - 2)
-  const N_SEGMENTS = 10;
+  const N_SEGMENTS = 24;
   const N_POINTS = N_SEGMENTS + 2;
 
   const pts: Vec2[] = [];
@@ -143,6 +143,7 @@ export async function applySkadisHooks(
   width: number,
   depth: number,
   radius: number,
+  chamferAll: boolean = false,
 ): Promise<Manifold> {
   const padding = 5; /* mm */
   const W = width - 2 * radius - 2 * padding; // Working area
@@ -160,8 +161,8 @@ export async function applySkadisHooks(
   let result = model;
   for (let i = 0; i < N; i++) {
     for (let j = 0; j < NV; j++) {
-      // For all but the first level, chamfer the clips
-      const chamfer = j > 0;
+      // For all but the first level, chamfer the clips (or all if chamferAll)
+      const chamfer = chamferAll || j > 0;
       const [clipL, clipR] = await clips(chamfer);
       result = result.add(clipL.translate(i * gw + dx, -depth / 2, j * gh));
       result = result.add(clipR.translate(i * gw + dx, -depth / 2, j * gh));

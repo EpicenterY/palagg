@@ -112,44 +112,57 @@ function pathToContours(commands: any[]): Vec2[][] {
   return contours;
 }
 
-// Auto-fit text: find fontSize so text fits within targetWidth x targetHeight
+// Auto-fit text: find fontSize so text fits target height (width is unconstrained)
 function autoFitFontSize(
   font: any,
   text: string,
-  targetWidth: number,
   targetHeight: number,
 ): number {
-  // Start with a test size and scale
   const testSize = 100;
   const path = font.getPath(text, 0, 0, testSize);
   const bb = path.getBoundingBox();
-  const textW = bb.x2 - bb.x1;
   const textH = bb.y2 - bb.y1;
 
-  if (textW === 0 || textH === 0) return testSize;
+  if (textH === 0) return testSize;
 
-  const scaleW = targetWidth / textW;
-  const scaleH = targetHeight / textH;
-  return testSize * Math.min(scaleW, scaleH);
+  return testSize * (targetHeight / textH);
+}
+
+/**
+ * Measure the rendered width of text at a given target height (no geometry).
+ */
+export async function measureTextWidth(
+  text: string,
+  targetHeight: number,
+): Promise<number> {
+  if (!text.trim()) return 0;
+  const font = await loadFont();
+  const fontSize = autoFitFontSize(font, text, targetHeight);
+  const path = font.getPath(text, 0, 0, fontSize);
+  const bb = path.getBoundingBox();
+  return bb.x2 - bb.x1;
+}
+
+export interface TextCrossSectionResult {
+  cs: CrossSection;
+  width: number;
 }
 
 export async function textToCrossSection(
   text: string,
-  targetWidth: number,
   targetHeight: number,
-): Promise<CrossSection | null> {
+): Promise<TextCrossSectionResult | null> {
   if (!text.trim()) return null;
 
   const font = await loadFont();
   const { CrossSection } = await ManifoldModule.get();
 
-  const fontSize = autoFitFontSize(font, text, targetWidth, targetHeight);
+  const fontSize = autoFitFontSize(font, text, targetHeight);
   const path = font.getPath(text, 0, 0, fontSize);
   const contours = pathToContours(path.commands);
 
   if (contours.length === 0) return null;
 
-  // Center the cross-section
   const bb = path.getBoundingBox();
   const cx = (bb.x1 + bb.x2) / 2;
   const cy = (bb.y1 + bb.y2) / 2;
@@ -158,7 +171,10 @@ export async function textToCrossSection(
     contour.map(([x, y]) => [x - cx, -(y - cy)] as Vec2),
   );
 
-  return new CrossSection(centered, "NonZero");
+  return {
+    cs: new CrossSection(centered, "NonZero"),
+    width: bb.x2 - bb.x1,
+  };
 }
 
 // Parse an SVG path d attribute into contours
@@ -293,9 +309,9 @@ function parseSvgPath(d: string): Vec2[][] {
 export async function emojiToCrossSection(
   svgPath: string,
   viewBox: [number, number, number, number],
-  targetWidth: number,
   targetHeight: number,
-): Promise<CrossSection | null> {
+  fillRule: "EvenOdd" | "NonZero" = "NonZero",
+): Promise<TextCrossSectionResult | null> {
   const { CrossSection } = await ManifoldModule.get();
 
   const contours = parseSvgPath(svgPath);
@@ -305,13 +321,15 @@ export async function emojiToCrossSection(
   const cx = vx + vw / 2;
   const cy = vy + vh / 2;
 
-  const scaleX = targetWidth / vw;
-  const scaleY = targetHeight / vh;
-  const scale = Math.min(scaleX, scaleY);
+  // Scale to fit height only (width is unconstrained)
+  const scale = targetHeight / vh;
 
   const transformed = contours.map((contour) =>
     contour.map(([x, y]) => [(x - cx) * scale, -(y - cy) * scale] as Vec2),
   );
 
-  return new CrossSection(transformed, "NonZero");
+  return {
+    cs: new CrossSection(transformed, fillRule),
+    width: vw * scale,
+  };
 }

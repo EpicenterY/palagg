@@ -109,14 +109,20 @@ export const stepper = (
 export const textInput = (
   id: string,
   opts: { label: string; placeholder: string },
-): { wrapper: HTMLElement; input: HTMLInputElement } => {
+): { wrapper: HTMLElement; input: HTMLInputElement; counter: HTMLElement } => {
   const input = document.createElement("input");
   input.type = "text";
   input.id = id;
   input.name = id;
   input.placeholder = opts.placeholder;
-  input.maxLength = 20;
   input.autocomplete = "off";
+
+  const counter = document.createElement("span");
+  counter.className = "text-input-counter";
+
+  const inputRow = document.createElement("div");
+  inputRow.className = "text-input-field";
+  inputRow.append(input, counter);
 
   const label = document.createElement("label");
   label.htmlFor = id;
@@ -124,9 +130,9 @@ export const textInput = (
 
   const wrapper = document.createElement("div");
   wrapper.className = "text-input-wrapper";
-  wrapper.append(label, input);
+  wrapper.append(label, inputRow);
 
-  return { wrapper, input };
+  return { wrapper, input, counter };
 };
 
 export const emojiPicker = (

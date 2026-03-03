@@ -11,7 +11,7 @@ import { strToU8, Zippable, zipSync } from "fflate";
 interface To3MF {
   meshes: Array<Mesh3MF>;
   components: [];
-  items: [{ objectID: string }];
+  items: Array<{ objectID: string }>;
   precision: number;
   header: Header;
 }
@@ -83,20 +83,63 @@ export function exportManifold(manifold: Manifold): Blob {
   });
 }
 
-export function exportTagParts(
-  body: Manifold,
-  plate: Manifold,
-  baseFilename: string,
-): Blob {
-  const bodyBytes = exportManifoldBytes(body);
-  const plateBytes = exportManifoldBytes(plate);
+export interface MultiBodyPart {
+  manifold: Manifold;
+  name: string;
+}
+
+export function exportMultiBodyManifold(bodies: MultiBodyPart[]): Blob {
+  const meshes: Mesh3MF[] = [];
+  const items: { objectID: string }[] = [];
+
+  for (let i = 0; i < bodies.length; i++) {
+    const { manifold, name } = bodies[i];
+    const manifoldMesh = manifold.getMesh();
+    const id = String(i + 1); // 3MF IDs start from 1
+
+    const vertices =
+      manifoldMesh.numProp === 3
+        ? manifoldMesh.vertProperties
+        : new Float32Array(manifoldMesh.numVert * 3);
+
+    if (manifoldMesh.numProp > 3) {
+      for (let v = 0; v < manifoldMesh.numVert; ++v) {
+        for (let j = 0; j < 3; ++j)
+          vertices[v * 3 + j] =
+            manifoldMesh.vertProperties[v * manifoldMesh.numProp + j];
+      }
+    }
+
+    meshes.push({ vertices, indices: manifoldMesh.triVerts, id, name });
+    items.push({ objectID: id });
+  }
+
+  const to3mf: To3MF = {
+    meshes,
+    components: [],
+    items,
+    precision: 7,
+    header: {
+      unit: "millimeter",
+      title: "palagg-ikea-skadis",
+      description: "",
+      application: "",
+    },
+  };
+
+  const model = to3dmodel(to3mf);
 
   const files: Zippable = {};
-  files[`${baseFilename}-body.3mf`] = bodyBytes;
-  files[`${baseFilename}-plate.3mf`] = plateBytes;
-  const zipFile = zipSync(files);
+  const fileForRelThumbnail = new FileForRelThumbnail();
+  fileForRelThumbnail.add3dModel("3D/3dmodel.model");
+  files["3D/3dmodel.model"] = strToU8(model);
+  files[fileForContentTypes.name] = strToU8(fileForContentTypes.content);
+  files[fileForRelThumbnail.name] = strToU8(fileForRelThumbnail.content);
 
-  return new Blob([zipFile], { type: "application/zip" });
+  const zipFile = zipSync(files);
+  return new Blob([zipFile], {
+    type: "application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
+  });
 }
 
 export function mesh2geometry(manifold: Manifold): THREE.BufferGeometry {
