@@ -189,50 +189,6 @@ canvas {
     padding: 1.5em 1.25em;
   }
 
-  #controls {
-    --label-width: auto;
-  }
-
-  /* 2-row layout: [label ... value] / [====slider====] */
-  .range-input-wrapper {
-    display: grid;
-    grid-template-columns: 1fr auto;
-    grid-template-rows: auto auto;
-    gap: 0.3em 0;
-    align-items: center;
-  }
-
-  .range-input-wrapper label {
-    grid-column: 1;
-    grid-row: 1;
-    min-width: 0;
-  }
-
-  .range-input-wrapper .range-input-value {
-    grid-column: 2;
-    grid-row: 1;
-  }
-
-  .range-input-wrapper input[type="range"] {
-    grid-column: 1 / -1;
-    grid-row: 2;
-    width: 100%;
-    margin: 0;
-  }
-
-  .toggle-option {
-    min-width: 0;
-    overflow: hidden;
-  }
-
-  .toggle-option span {
-    min-width: 0;
-    font-size: 0.7em;
-    padding: 0.4em 0.3em;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
 }
 
 #panel {
@@ -411,9 +367,9 @@ footer ul {
 .toggle-option span {
   flex: 1;
   text-align: center;
-  padding: 0.4em 0.8em;
+  padding: 0.5em 0.8em;
   border-radius: calc(var(--radius-sm) - 2px);
-  font-size: 0.9em;
+  font-size: 1em;
   font-weight: 600;
   color: var(--color-text-muted);
   transition: background 0.15s, color 0.15s, box-shadow 0.15s;
@@ -426,6 +382,18 @@ footer ul {
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.1);
 }
 
+.toggle-badge-new {
+  font-size: 0.45em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  line-height: 1;
+  color: var(--color-surface);
+  background: var(--color-primary);
+  padding: 0.2em 0.45em;
+  border-radius: 999px;
+  margin-left: 0.3em;
+  vertical-align: super;
+}
 
 .levels-control label {
   margin-right: 0;
@@ -723,6 +691,65 @@ footer ul {
 
 .stepper-input-wrapper button:active svg {
   stroke-width: 0.2em;
+}
+
+/* ── Mobile: Control overrides (must come after base control styles) ── */
+@media (width < 600px) {
+  #controls {
+    --label-width: auto;
+  }
+
+  /* 2-row layout: [label ... value] / [====slider====] */
+  .range-input-wrapper {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    gap: 0.2em 0;
+    align-items: center;
+  }
+
+  .range-input-wrapper label {
+    grid-column: 1;
+    grid-row: 1;
+    min-width: 0;
+  }
+
+  .range-input-wrapper .range-input-value {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .range-input-wrapper input[type="range"] {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    width: 100%;
+    margin: 0;
+    /* space above/below for large touch thumb (2em) to not overlap text */
+    padding: 1em 0;
+  }
+
+  /* Reduce value font size for better label–value balance on mobile */
+  .range-input-value input {
+    font-size: 1.05em;
+  }
+
+  .stepper-input-value input {
+    font-size: 1.05em;
+  }
+
+  .toggle-option {
+    min-width: 0;
+    overflow: hidden;
+  }
+
+  .toggle-option span {
+    min-width: 0;
+    font-size: 0.95em;
+    padding: 0.55em 0.4em;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 }
 
 /* Download */

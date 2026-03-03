@@ -372,7 +372,8 @@ async function centerCamera() {
   // world matrix to avoid rotation animation messing with the centering)
   const mat = new THREE.Matrix4();
   mat.makeRotationAxis(new THREE.Vector3(0, 0, 1), MESH_ROTATION_DELTA);
-  renderer.centerCameraAround(mesh, mat);
+  const padding = shapeType.latest === "tag" ? 0.2 : 0;
+  renderer.centerCameraAround(mesh, mat, padding);
 }
 
 const MESH_ROTATION_DELTA = 0.1;
@@ -850,6 +851,17 @@ const shapeControl = toggleControl("shape", {
   ],
 });
 controls.append(shapeControl.wrapper);
+
+// "NEW" badge on Tag option
+const tagOption = shapeControl.wrapper.querySelector<HTMLSpanElement>(
+  '.toggle-option:last-child span',
+);
+if (tagOption) {
+  const badge = document.createElement("sup");
+  badge.className = "toggle-badge-new";
+  badge.textContent = "NEW";
+  tagOption.appendChild(badge);
+}
 
 const levelsControl = stepper("levels", {
   label: "Levels",

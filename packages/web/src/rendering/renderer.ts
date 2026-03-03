@@ -117,7 +117,7 @@ export class Renderer {
     return true;
   }
 
-  centerCameraAround(target: THREE.Mesh, mat: THREE.Matrix4) {
+  centerCameraAround(target: THREE.Mesh, mat: THREE.Matrix4, padding = 0) {
     const geometry = target.geometry;
     const geometryVerticies = geometry.getAttribute("position");
 
@@ -134,11 +134,20 @@ export class Renderer {
       (0.5 * (this.canvas.clientHeight - canvasParent.clientHeight)) /
       canvasParent.clientHeight;
 
-    const { left, right, top, bottom, far, near } = computeProjectedBounds(
+    const bounds = computeProjectedBounds(
       this.camera,
       geometryVerticies,
       mat,
     );
+
+    // Expand bounds uniformly by padding fraction (e.g. 0.15 = 15% extra space on each side)
+    const padW = (bounds.right - bounds.left) * padding;
+    const padH = (bounds.top - bounds.bottom) * padding;
+    const left = bounds.left - padW;
+    const right = bounds.right + padW;
+    const top = bounds.top + padH;
+    const bottom = bounds.bottom - padH;
+    const { far, near } = bounds;
 
     // Calculate a new viewHeight so that the part fits vertically (plus overflow)
     // View height/width in camera coordinates, exluding overflow
