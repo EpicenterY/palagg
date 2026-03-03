@@ -4,12 +4,11 @@ import * as THREE from "three";
 import { Renderer } from "./rendering/renderer";
 
 import { CLIP_HEIGHT, box, drawerOrganizer } from "./model/manifold";
-import { exportManifold, exportMultiBodyManifold, mesh2geometry } from "./model/export";
-import type { MultiBodyPart } from "./model/export";
+import { exportManifold, exportMultiBodyManifold, mesh2geometry, computeCreaseNormals } from "./model/export";
 import { TMFLoader } from "./model/load";
 import { Animate, immediate } from "./animate";
 import { zipSync } from "fflate";
-import { tagClipBase, tagTextPlate, tagPreview, TAG_DEFAULT_WIDTH, TAG_MIN_WIDTH, TAG_MAX_WIDTH, TAG_MAX_TEXT_CONTENT_WIDTH, TAG_TEXT_AREA_HEIGHT } from "./model/tag";
+import { tagPreview, tagExportBodies, TAG_DEFAULT_WIDTH, TAG_MIN_WIDTH, TAG_MAX_WIDTH, TAG_MAX_TEXT_CONTENT_WIDTH, TAG_TEXT_AREA_HEIGHT } from "./model/tag";
 import { measureTextWidth } from "./model/text";
 import { EMOJI_PRESETS } from "./model/emoji";
 
@@ -295,14 +294,14 @@ async function reloadModel(
     );
   }
   const geometry = mesh2geometry(model);
-  geometry.computeVertexNormals();
+  computeCreaseNormals(geometry, Math.PI / 6); // 30° crease angle
   mesh.geometry = geometry;
   mesh.clear();
 
   // Add text fill as a separate child mesh on layer 1 (rendered as black by fill pass)
   if (tagTextFill) {
     const textGeom = mesh2geometry(tagTextFill);
-    textGeom.computeVertexNormals();
+    computeCreaseNormals(textGeom, Math.PI / 6);
     const textMesh = new THREE.Mesh(textGeom);
     textMesh.layers.enable(1);
     mesh.add(textMesh);
@@ -469,16 +468,7 @@ link.addEventListener("click", async (e) => {
 
   const snapshot = buildSnapshot();
   const baseName = filenameForSnapshot(snapshot);
-  const { plate, textFill, actualWidth } = await tagTextPlate(snapshot.width, snapshot.tagText, snapshot.tagEmoji);
-  const clipBase = await tagClipBase(actualWidth);
-
-  const bodies: MultiBodyPart[] = [
-    { manifold: clipBase, name: "clip-base" },
-    { manifold: plate, name: "plate" },
-  ];
-  if (textFill) {
-    bodies.push({ manifold: textFill, name: "text" });
-  }
+  const { bodies } = await tagExportBodies(snapshot.width, snapshot.tagText, snapshot.tagEmoji);
   const blob = exportMultiBodyManifold(bodies);
 
   if (tagDownloadUrl) URL.revokeObjectURL(tagDownloadUrl);
@@ -545,17 +535,8 @@ const downloadOrderAsZip = async () => {
     const filenameCounts = new Map<string, number>();
     for (const line of orderLines) {
       if (line.snapshot.shape === "tag") {
-        // Tag: export as single multi-body 3MF
-        const { plate, textFill, actualWidth } = await tagTextPlate(line.snapshot.width, line.snapshot.tagText, line.snapshot.tagEmoji);
-        const clipBase = await tagClipBase(actualWidth);
-
-        const bodies: MultiBodyPart[] = [
-          { manifold: clipBase, name: "clip-base" },
-          { manifold: plate, name: "plate" },
-        ];
-        if (textFill) {
-          bodies.push({ manifold: textFill, name: "text" });
-        }
+        // Tag: export as single multi-body 3MF (print-ready layout)
+        const { bodies } = await tagExportBodies(line.snapshot.width, line.snapshot.tagText, line.snapshot.tagEmoji);
         const tagBlob = exportMultiBodyManifold(bodies);
         const tagBytes = new Uint8Array(await tagBlob.arrayBuffer());
 

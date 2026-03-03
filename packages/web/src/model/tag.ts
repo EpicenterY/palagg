@@ -4,6 +4,7 @@ import {
   roundedRectangle,
   applySkadisHooks,
 } from "./manifold";
+import type { MultiBodyPart } from "./export";
 import { textToCrossSection, emojiToCrossSection } from "./text";
 import { EMOJI_PRESETS } from "./emoji";
 
@@ -235,4 +236,46 @@ export async function tagPreview(
   const preview = clipBase.add(plate);
 
   return { preview, textFill, actualWidth };
+}
+
+const TAG_EXPORT_GAP = 5; // plate–clipBase Y-direction spacing (mm)
+
+/**
+ * Export bodies: print-ready layout for 3MF.
+ * plate is laid flat with text face at Z=0 (build plate),
+ * clipBase is placed upright next to it with a Y gap.
+ */
+export async function tagExportBodies(
+  width: number,
+  text: string,
+  emojiId: string | null,
+): Promise<{ bodies: MultiBodyPart[]; actualWidth: number }> {
+  const { plate, textFill, actualWidth } = await tagTextPlate(width, text, emojiId);
+  const clipBase = await tagClipBase(actualWidth);
+
+  // Plate: rotate so front face (Y=+D/2) lands at Z=0 (build plate)
+  const exportPlate = plate
+    .rotate([-90, 0, 0])
+    .translate([0, 0, TAG_PLATE_DEPTH / 2]);
+
+  // ClipBase: shift Z so bottom sits at Z=0, separate from plate in Y
+  const exportClipBase = clipBase.translate([
+    0,
+    -TAG_EXPORT_GAP,
+    -(TAG_PLATE_HEIGHT - CLIP_HEIGHT) / 2,
+  ]);
+
+  const bodies: MultiBodyPart[] = [
+    { manifold: exportClipBase, name: "clip-base" },
+    { manifold: exportPlate, name: "plate" },
+  ];
+
+  if (textFill) {
+    const exportTextFill = textFill
+      .rotate([-90, 0, 0])
+      .translate([0, 0, TAG_PLATE_DEPTH / 2]);
+    bodies.push({ manifold: exportTextFill, name: "text", color: "#000000" });
+  }
+
+  return { bodies, actualWidth };
 }
