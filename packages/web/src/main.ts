@@ -296,7 +296,13 @@ async function reloadModel(
     );
   }
   const geometry = mesh2geometry(model);
-  computeCreaseNormals(geometry, Math.PI / 6); // 30° crease angle
+  if (shape === "tag") {
+    // Tag has curved stadium surfaces — use crease normals for smooth shading
+    computeCreaseNormals(geometry, Math.PI / 6);
+  } else {
+    // Box/Grid — fast built-in normals (matches original skapa performance)
+    geometry.computeVertexNormals();
+  }
   mesh.geometry = geometry;
   mesh.clear();
 
@@ -311,6 +317,11 @@ async function reloadModel(
 }
 
 // when target dimensions are changed, update the model to download
+// Debounce the download-model build so it doesn't run CSG on every slider tick.
+// The 3D preview rebuild (in the render loop) is separate and throttled independently.
+let tmfDebounceTimer: ReturnType<typeof setTimeout> | undefined;
+const TMF_DEBOUNCE_MS = 300;
+
 Dyn.sequence([
   shapeType,
   modelDimensions.height,
@@ -345,9 +356,14 @@ Dyn.sequence([
     // Just trigger reloadModelNeeded
     reloadModelNeeded = true;
   } else {
-    const filename = filenameForSnapshot(snapshot);
-    const modelP = modelForSnapshot(snapshot);
-    tmfLoader.load(modelP, filename);
+    // Debounce: only build the download model after input settles,
+    // so slider drag doesn't trigger costly CSG for the download link.
+    clearTimeout(tmfDebounceTimer);
+    tmfDebounceTimer = setTimeout(() => {
+      const filename = filenameForSnapshot(snapshot);
+      const modelP = modelForSnapshot(snapshot);
+      tmfLoader.load(modelP, filename);
+    }, TMF_DEBOUNCE_MS);
   }
 });
 
@@ -1018,55 +1034,51 @@ inputs.levelsMinus.addEventListener("click", () => {
 });
 
 // width
-(
-  [
-    [inputs.width, "change"],
-    [inputs.widthRange, "input"],
-  ] as const
-).forEach(([input, evnt]) => {
-  innerWidth.addListener((width) => {
-    input.value = `${width}`;
-  });
-  input.addEventListener(evnt, () => {
-    const outer = parseInt(input.value) + 2 * modelDimensions.wall.latest;
-    if (!Number.isNaN(outer))
-      modelDimensions.width.send(Math.max(outer, MIN_WIDTH));
-  });
+innerWidth.addListener((width) => {
+  inputs.width.value = `${width}`;
+  inputs.widthRange.value = `${width}`;
+});
+inputs.width.addEventListener("change", () => {
+  const outer = parseInt(inputs.width.value) + 2 * modelDimensions.wall.latest;
+  if (!Number.isNaN(outer))
+    modelDimensions.width.send(Math.max(outer, MIN_WIDTH));
+});
+inputs.widthRange.addEventListener("input", () => {
+  const outer = parseInt(inputs.widthRange.value) + 2 * modelDimensions.wall.latest;
+  if (!Number.isNaN(outer))
+    modelDimensions.width.send(Math.max(outer, MIN_WIDTH));
 });
 
 // depth
-(
-  [
-    [inputs.depth, "change"],
-    [inputs.depthRange, "input"],
-  ] as const
-).forEach(([input, evnt]) => {
-  innerDepth.addListener((depth) => {
-    input.value = `${depth}`;
-  });
-  input.addEventListener(evnt, () => {
-    const outer = parseInt(input.value) + 2 * modelDimensions.wall.latest;
-    if (!Number.isNaN(outer))
-      modelDimensions.depth.send(Math.max(outer, MIN_DEPTH));
-  });
+innerDepth.addListener((depth) => {
+  inputs.depth.value = `${depth}`;
+  inputs.depthRange.value = `${depth}`;
+});
+inputs.depth.addEventListener("change", () => {
+  const outer = parseInt(inputs.depth.value) + 2 * modelDimensions.wall.latest;
+  if (!Number.isNaN(outer))
+    modelDimensions.depth.send(Math.max(outer, MIN_DEPTH));
+});
+inputs.depthRange.addEventListener("input", () => {
+  const outer = parseInt(inputs.depthRange.value) + 2 * modelDimensions.wall.latest;
+  if (!Number.isNaN(outer))
+    modelDimensions.depth.send(Math.max(outer, MIN_DEPTH));
 });
 
 // top extra height (box-only, hidden by default)
-(
-  [
-    [inputs.topExtra, "change"],
-    [inputs.topExtraRange, "input"],
-  ] as const
-).forEach(([input, evnt]) => {
-  topExtra.addListener((extra) => {
-    input.value = `${extra}`;
-  });
-  input.addEventListener(evnt, () => {
-    const n = parseInt(input.value);
-    if (!Number.isNaN(n)) {
-      topExtra.send(Math.max(MIN_TOP_EXTRA, Math.min(n, MAX_TOP_EXTRA)));
-    }
-  });
+topExtra.addListener((extra) => {
+  inputs.topExtra.value = `${extra}`;
+  inputs.topExtraRange.value = `${extra}`;
+});
+inputs.topExtra.addEventListener("change", () => {
+  const n = parseInt(inputs.topExtra.value);
+  if (!Number.isNaN(n))
+    topExtra.send(Math.max(MIN_TOP_EXTRA, Math.min(n, MAX_TOP_EXTRA)));
+});
+inputs.topExtraRange.addEventListener("input", () => {
+  const n = parseInt(inputs.topExtraRange.value);
+  if (!Number.isNaN(n))
+    topExtra.send(Math.max(MIN_TOP_EXTRA, Math.min(n, MAX_TOP_EXTRA)));
 });
 
 // Shape selector
@@ -1078,6 +1090,8 @@ shapeControl.inputs.forEach((input) => {
 
 shapeType.addListener((shape) => {
   reloadModelNeeded = true;
+  // Toggle fill pass: only needed for tag text rendering (saves 2 scene renders/frame)
+  renderer.outlinePass.fillEnabled = shape === "tag";
   if (shape === "tag") {
     partPositioning.send({ tag: "static", position: 1 });
     if (tagFirstVisit) {
@@ -1201,20 +1215,19 @@ tagTextControl.input.addEventListener("input", () => {
 });
 
 // Tag width
-(
-  [
-    [tagWidthControl.input, "change"],
-    [tagWidthControl.range, "input"],
-  ] as const
-).forEach(([input, evnt]) => {
-  tagWidth.addListener((w) => {
-    input.value = `${w}`;
-  });
-  input.addEventListener(evnt, () => {
-    const n = parseInt(input.value);
-    if (!Number.isNaN(n))
-      tagWidth.send(Math.max(TAG_MIN_WIDTH, Math.min(n, TAG_MAX_WIDTH)));
-  });
+tagWidth.addListener((w) => {
+  tagWidthControl.input.value = `${w}`;
+  tagWidthControl.range.value = `${w}`;
+});
+tagWidthControl.input.addEventListener("change", () => {
+  const n = parseInt(tagWidthControl.input.value);
+  if (!Number.isNaN(n))
+    tagWidth.send(Math.max(TAG_MIN_WIDTH, Math.min(n, TAG_MAX_WIDTH)));
+});
+tagWidthControl.range.addEventListener("input", () => {
+  const n = parseInt(tagWidthControl.range.value);
+  if (!Number.isNaN(n))
+    tagWidth.send(Math.max(TAG_MIN_WIDTH, Math.min(n, TAG_MAX_WIDTH)));
 });
 
 // Shared emoji toggle logic for any emoji button
@@ -1440,6 +1453,13 @@ const forgetMouse = () => {
 // Set to current frame's timestamp when a model starts loading, and set
 // to undefined when the model has finished loading
 let modelLoadStarted: undefined | DOMHighResTimeStamp;
+let lastModelLoadFinished: DOMHighResTimeStamp = 0;
+
+// Minimum ms between CSG rebuild completions. A small interval gives the main
+// thread just enough breathing room for input events between CSG calls.
+// The download-model build is debounced separately (TMF_DEBOUNCE_MS), so only
+// one CSG (the preview) runs per cycle during slider drag.
+const MODEL_REBUILD_INTERVAL = 16; // ~1 frame at 60fps
 
 function loop(nowMillis: DOMHighResTimeStamp) {
   requestAnimationFrame(loop);
@@ -1481,12 +1501,14 @@ function loop(nowMillis: DOMHighResTimeStamp) {
     reloadModelNeeded = true;
   }
 
-  // Whether we should start loading a new model on this frame
-  // True if (1) model needs reloading and (2) no model is currently loading (or
-  // if loading seems stuck)
+  // Whether we should start loading a new model on this frame:
+  //   (1) model needs reloading
+  //   (2) no model is currently loading (or loading seems stuck)
+  //   (3) enough time has passed since last rebuild finished (throttle)
   const reloadModelNow =
     reloadModelNeeded &&
-    (modelLoadStarted === undefined || nowMillis - modelLoadStarted > 100);
+    (modelLoadStarted === undefined || nowMillis - modelLoadStarted > 200) &&
+    nowMillis - lastModelLoadFinished >= MODEL_REBUILD_INTERVAL;
 
   if (reloadModelNow) {
     modelLoadStarted = nowMillis;
@@ -1504,6 +1526,7 @@ function loop(nowMillis: DOMHighResTimeStamp) {
       organizerAnimations.rows.current,
     ).then(() => {
       modelLoadStarted = undefined;
+      lastModelLoadFinished = performance.now();
       centerCameraNeeded = true;
     });
   }

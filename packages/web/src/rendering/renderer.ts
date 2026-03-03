@@ -20,6 +20,7 @@ export class Renderer {
   public canvasHeight: number;
 
   public thickenPass: ThickenPass;
+  public outlinePass: RenderOutlinePass;
 
   /* Get the pixel color at position (input should be element's offsetX/Y coords) */
   getCanvasPixelColor(pos: [number, number]): [number, number, number, number] {
@@ -63,13 +64,13 @@ export class Renderer {
 
     // Passes
 
-    const renderOutlinePass = new RenderOutlinePass(
+    this.outlinePass = new RenderOutlinePass(
       this.scene,
       this.camera,
       canvas.clientWidth,
       canvas.clientHeight,
     );
-    this.composer.addPass(renderOutlinePass);
+    this.composer.addPass(this.outlinePass);
 
     const thickenPass = new ThickenPass(
       canvas.clientWidth,

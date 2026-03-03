@@ -1,6 +1,6 @@
 import * as THREE from "three";
 
-const ANIM_DURATION = 0.5; // in seconds
+const ANIM_DURATION = 0.55; // in seconds
 
 type Animation = {
   clock: THREE.Clock; // clock started at the beginning of the animation
@@ -40,8 +40,19 @@ export class Animate {
   // An animation object, if an animation is underway
   private animation?: Animation;
 
+  // Set when snapTo() changes the value — consumed by update()
+  private snapped = false;
+
   public constructor(initial: number) {
     this.current = initial;
+  }
+
+  // Immediately snap to the target value, cancelling any ongoing animation.
+  public snapTo(target: number) {
+    if (this.current === target) return;
+    this.current = target;
+    this.animation = undefined;
+    this.snapped = true;
   }
 
   // Starts an animation (or updates an existing animation) to the target.
@@ -49,7 +60,7 @@ export class Animate {
   // by applying the function to 'current'.
   public startAnimationTo(
     target: number,
-    easingFunction: EasingFunction = easeInOutCubic,
+    easingFunction: EasingFunction = easeOutCubic,
   ) {
     // If we're already at the target, nothing to do
     if (this.current === target) {
@@ -74,6 +85,11 @@ export class Animate {
 
   // Returns true if the value was updated
   public update(): boolean {
+    if (this.snapped) {
+      this.snapped = false;
+      return true;
+    }
+
     if (this.animation === undefined) {
       return false;
     }

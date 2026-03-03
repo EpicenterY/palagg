@@ -13,6 +13,9 @@ export class RenderOutlinePass extends Pass {
   private normalRenderTarget = new THREE.WebGLRenderTarget();
   private fillRenderTarget = new THREE.WebGLRenderTarget();
 
+  // When false, skip fill sub-passes (2 extra scene renders) for better perf
+  public fillEnabled = false;
+
   constructor(
     private scene: THREE.Scene,
     private camera: THREE.Camera,
@@ -73,25 +76,31 @@ export class RenderOutlinePass extends Pass {
     renderer.setRenderTarget(this.normalRenderTarget);
     renderer.render(this.scene, this.camera);
 
-    /// 2. Fill pass with depth occlusion
-    // 2a. Depth pre-pass: render ALL geometry (depth only) to fill RT
-    const savedMask = this.camera.layers.mask;
-    this.camera.layers.enableAll();
-    this.scene.overrideMaterial = this.depthOnlyMaterial;
-    renderer.setRenderTarget(this.fillRenderTarget);
-    renderer.clear();
-    renderer.render(this.scene, this.camera);
+    /// 2. Fill pass with depth occlusion (only when tag text is visible)
+    if (this.fillEnabled) {
+      // 2a. Depth pre-pass: render ALL geometry (depth only) to fill RT
+      const savedMask = this.camera.layers.mask;
+      this.camera.layers.enableAll();
+      this.scene.overrideMaterial = this.depthOnlyMaterial;
+      renderer.setRenderTarget(this.fillRenderTarget);
+      renderer.clear();
+      renderer.render(this.scene, this.camera);
 
-    // 2b. Color pass: render only layer-1 meshes as white, with depth test
-    //     so text behind the plate body is occluded
-    this.camera.layers.set(1);
-    this.scene.overrideMaterial = this.fillMaterial;
-    renderer.autoClearColor = false;
-    renderer.autoClearDepth = false;
-    renderer.render(this.scene, this.camera);
-    renderer.autoClearColor = true;
-    renderer.autoClearDepth = true;
-    this.camera.layers.mask = savedMask;
+      // 2b. Color pass: render only layer-1 meshes as white, with depth test
+      //     so text behind the plate body is occluded
+      this.camera.layers.set(1);
+      this.scene.overrideMaterial = this.fillMaterial;
+      renderer.autoClearColor = false;
+      renderer.autoClearDepth = false;
+      renderer.render(this.scene, this.camera);
+      renderer.autoClearColor = true;
+      renderer.autoClearDepth = true;
+      this.camera.layers.mask = savedMask;
+    } else {
+      // Clear fill RT so the shader reads 0 (no fill)
+      renderer.setRenderTarget(this.fillRenderTarget);
+      renderer.clear();
+    }
 
     // Restore
     this.scene.overrideMaterial = oldOverride;

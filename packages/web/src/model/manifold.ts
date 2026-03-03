@@ -31,7 +31,7 @@ function generateArc({
   radius: number;
 }): Vec2[] {
   // Number of segments (total points - 2)
-  const N_SEGMENTS = 24;
+  const N_SEGMENTS = 10;
   const N_POINTS = N_SEGMENTS + 2;
 
   const pts: Vec2[] = [];
@@ -79,22 +79,17 @@ export async function roundedRectangle(
   return new CrossSection(vertices);
 }
 
-async function clipRCrossSection(): Promise<CrossSection> {
-  const { CrossSection } = await ManifoldModule.get();
-
-  const vertices: Vec2[] = [
-    [0.95, 0],
-    [2.45, 0],
-    [2.45, 3.7],
-    [3.05, 4.3],
-    [3.05, 5.9],
-    [2.45, 6.5],
-    [0.95, 6.5],
-    [0.95, 0],
-  ];
-
-  return new CrossSection(vertices).rotate(180);
-}
+// The clip cross-section vertices (right side)
+const CLIP_R_VERTICES: Vec2[] = [
+  [0.95, 0],
+  [2.45, 0],
+  [2.45, 3.7],
+  [3.05, 4.3],
+  [3.05, 5.9],
+  [2.45, 6.5],
+  [0.95, 6.5],
+  [0.95, 0],
+];
 
 // The skadis clips, starting at the origin and pointing in -Z
 // If chamfer is true, the bottom of the clip has a 45 deg chamfer
@@ -102,8 +97,13 @@ async function clipRCrossSection(): Promise<CrossSection> {
 export async function clips(
   chamfer: boolean = false,
 ): Promise<[Manifold, Manifold]> {
-  const clipR = (await clipRCrossSection()).extrude(CLIP_HEIGHT);
-  const clipL = (await clipRCrossSection()).mirror([1, 0]).extrude(CLIP_HEIGHT);
+  const { CrossSection } = await ManifoldModule.get();
+
+  const clipRCS = new CrossSection(CLIP_R_VERTICES).rotate(180);
+  const clipLCS = clipRCS.mirror([1, 0]);
+
+  const clipR = clipRCS.extrude(CLIP_HEIGHT);
+  const clipL = clipLCS.extrude(CLIP_HEIGHT);
 
   if (!chamfer) {
     return [clipR, clipL];
