@@ -4,10 +4,10 @@ import * as THREE from "three";
 import { Renderer } from "./rendering/renderer";
 
 import { CLIP_HEIGHT, box, drawerOrganizer } from "./model/manifold";
-import { exportManifold, exportMultiBodyManifold, mesh2geometry, computeCreaseNormals } from "./model/export";
+import { exportMultiBodyManifold, exportBuildPlate3MF, mesh2geometry, computeCreaseNormals } from "./model/export";
+import type { BuildPlateGroup } from "./model/export";
 import { TMFLoader } from "./model/load";
 import { Animate, immediate } from "./animate";
-import { zipSync } from "fflate";
 import { tagPreview, tagExportBodies, TAG_DEFAULT_WIDTH, TAG_MIN_WIDTH, TAG_MAX_WIDTH, TAG_MAX_TEXT_CONTENT_WIDTH, TAG_TEXT_AREA_HEIGHT } from "./model/tag";
 import { measureTextWidth } from "./model/text";
 import { EMOJI_PRESETS } from "./model/emoji";
@@ -17,6 +17,7 @@ import { Dyn } from "twrl";
 import { rangeControl, stepper, toggleControl, textInput, emojiPicker, addEmojiButton } from "./controls";
 import { searchIcons, fetchIconData, iconifyToPreset } from "./iconify";
 import { loadCustomIcons, saveCustomIcon } from "./icon-store";
+import { remainingQuota, recordDownload, msUntilNextSlot, resetQuota, DOWNLOAD_LIMIT } from "./rate-limit";
 
 /// CONSTANTS
 
@@ -475,15 +476,132 @@ const orderLines: OrderLine[] = [];
 let orderZipUrl: string | undefined;
 let tagDownloadUrl: string | undefined;
 
+// ── Quota UI (inside #download button) ──
+const quotaContainer = document.createElement("span");
+quotaContainer.className = "download-quota";
+
+const quotaDots = document.createElement("span");
+quotaDots.className = "download-quota-dots";
+for (let i = 0; i < DOWNLOAD_LIMIT; i++) {
+  const dot = document.createElement("span");
+  dot.className = "download-quota-dot";
+  quotaDots.appendChild(dot);
+}
+
+const quotaText = document.createElement("span");
+quotaText.className = "download-quota-text";
+
+quotaContainer.appendChild(quotaDots);
+quotaContainer.appendChild(quotaText);
+
+link.textContent = "";
+const linkLabel = document.createElement("span");
+linkLabel.textContent = "3MF 다운로드";
+link.appendChild(linkLabel);
+link.appendChild(quotaContainer);
+
+let quotaTimerId: ReturnType<typeof setInterval> | undefined;
+
+const updatePlaceOrderDisabled = () => {
+  placeOrderButton.disabled =
+    orderLines.length === 0 || remainingQuota() <= 0;
+};
+
+const refreshQuotaUI = () => {
+  const remaining = remainingQuota();
+  const dots = quotaDots.children;
+  for (let i = 0; i < DOWNLOAD_LIMIT; i++) {
+    dots[i].classList.toggle("is-filled", i < remaining);
+  }
+
+  if (remaining > 0) {
+    quotaText.textContent = `${remaining}/${DOWNLOAD_LIMIT}`;
+    link.classList.remove("is-exhausted");
+    if (quotaTimerId !== undefined) {
+      clearInterval(quotaTimerId);
+      quotaTimerId = undefined;
+    }
+  } else {
+    const formatCountdown = (ms: number) => {
+      const totalSec = Math.ceil(ms / 1000);
+      const min = Math.floor(totalSec / 60);
+      const sec = totalSec % 60;
+      return `${min}:${String(sec).padStart(2, "0")}`;
+    };
+    quotaText.textContent = formatCountdown(msUntilNextSlot());
+    link.classList.add("is-exhausted");
+
+    if (quotaTimerId === undefined) {
+      quotaTimerId = setInterval(() => {
+        if (remainingQuota() > 0) {
+          refreshQuotaUI();
+          updatePlaceOrderDisabled();
+        } else {
+          quotaText.textContent = formatCountdown(msUntilNextSlot());
+        }
+      }, 1000);
+    }
+  }
+
+  updatePlaceOrderDisabled();
+};
+
+refreshQuotaUI();
+
+// ── Secret quota reset (3 clicks on dots → password prompt) ──
+let secretClickCount = 0;
+let secretClickTimer: ReturnType<typeof setTimeout> | undefined;
+
+quotaDots.addEventListener("click", (e) => {
+  e.stopPropagation();
+  e.preventDefault();
+  secretClickCount++;
+  if (secretClickTimer !== undefined) clearTimeout(secretClickTimer);
+  if (secretClickCount >= 3) {
+    secretClickCount = 0;
+    const pin = prompt("비밀번호를 입력해 주세요. (힌트 : 이비오 창립기념일)");
+    if (pin === "0715") {
+      resetQuota();
+      refreshQuotaUI();
+    }
+  } else {
+    secretClickTimer = setTimeout(() => {
+      secretClickCount = 0;
+    }, 1500);
+  }
+});
+
 // Update download button text for tag mode
 shapeType.addListener((_shape) => {
-  link.textContent = "3MF 다운로드";
+  linkLabel.textContent = "3MF 다운로드";
 });
 
 // Handle tag download via click
 link.addEventListener("click", async (e) => {
-  if (shapeType.latest !== "tag") return; // Let default <a> behavior handle non-tag
+  if (shapeType.latest !== "tag") {
+    // Non-tag: rate limit gate for <a> default behavior
+    if (remainingQuota() <= 0) {
+      e.preventDefault();
+      return;
+    }
+    if (!recordDownload()) {
+      e.preventDefault();
+      refreshQuotaUI();
+      return;
+    }
+    refreshQuotaUI();
+    return; // Let default <a> behavior proceed
+  }
+
+  // Tag mode
   e.preventDefault();
+
+  if (remainingQuota() <= 0) return;
+  if (!recordDownload()) {
+    refreshQuotaUI();
+    return;
+  }
+  refreshQuotaUI();
 
   const snapshot = buildSnapshot();
   const baseName = filenameForSnapshot(snapshot);
@@ -506,7 +624,7 @@ const renderOrderSheet = () => {
   if (orderLines.length === 0) {
     orderItemsList.innerHTML =
       '<li class="order-items-empty">아직 추가된 주문이 없습니다.</li>';
-    placeOrderButton.disabled = true;
+    updatePlaceOrderDisabled();
     return;
   }
 
@@ -523,7 +641,7 @@ const renderOrderSheet = () => {
     )
     .join("");
 
-  placeOrderButton.disabled = false;
+  updatePlaceOrderDisabled();
 };
 
 const addCurrentSelectionToOrder = () => {
@@ -758,82 +876,70 @@ function openIconSearchModal(): Promise<import("./model/emoji").EmojiPreset | nu
   });
 }
 
-const downloadOrderAsZip = async () => {
+const downloadOrderAs3MF = async () => {
   if (orderLines.length === 0) return;
+  if (remainingQuota() <= 0) return;
 
   const orderName = await promptOrderName();
   if (orderName === null) return;
+
+  if (!recordDownload()) {
+    refreshQuotaUI();
+    return;
+  }
+  refreshQuotaUI();
 
   placeOrderButton.disabled = true;
   placeOrderButton.textContent = "주문 파일 생성 중...";
 
   try {
-    const files: Record<string, Uint8Array> = {};
-    const filenameCounts = new Map<string, number>();
+    const groups: BuildPlateGroup[] = [];
     for (const line of orderLines) {
       if (line.snapshot.shape === "tag") {
-        // Tag: export as single multi-body 3MF (print-ready layout)
-        const { bodies } = await tagExportBodies(line.snapshot.width, line.snapshot.tagText, line.snapshot.tagEmoji);
-        const tagBlob = exportMultiBodyManifold(bodies);
-        const tagBytes = new Uint8Array(await tagBlob.arrayBuffer());
-
-        for (let i = 0; i < line.quantity; i++) {
-          const count = (filenameCounts.get(line.filename) ?? 0) + 1;
-          filenameCounts.set(line.filename, count);
-          const suffix = count === 1 ? "" : `-${count}`;
-          files[`${line.filename}${suffix}.3mf`] = tagBytes;
-        }
+        const { bodies } = await tagExportBodies(
+          line.snapshot.width,
+          line.snapshot.tagText,
+          line.snapshot.tagEmoji,
+        );
+        groups.push({ bodies, quantity: line.quantity, name: line.filename });
       } else {
         const model = await modelForSnapshot(line.snapshot);
-        const blob = exportManifold(model);
-        const bytes = new Uint8Array(await blob.arrayBuffer());
-
-        for (let i = 0; i < line.quantity; i++) {
-          const lastDot = line.filename.lastIndexOf(".");
-          const base =
-            lastDot >= 0 ? line.filename.slice(0, lastDot) : line.filename;
-          const ext = lastDot >= 0 ? line.filename.slice(lastDot) : "";
-          const count = (filenameCounts.get(line.filename) ?? 0) + 1;
-          filenameCounts.set(line.filename, count);
-          const uniqueFilename =
-            count === 1 ? line.filename : `${base}-${count}${ext}`;
-
-          files[uniqueFilename] = bytes;
-        }
+        groups.push({
+          bodies: [{ manifold: model, name: line.filename }],
+          quantity: line.quantity,
+          name: line.filename,
+        });
       }
     }
 
-    const zipBytes = zipSync(files);
-    const zipBlob = new Blob([Uint8Array.from(zipBytes)], {
-      type: "application/zip",
-    });
+    const blob = exportBuildPlate3MF(groups);
 
     if (orderZipUrl) {
       URL.revokeObjectURL(orderZipUrl);
     }
 
-    orderZipUrl = URL.createObjectURL(zipBlob);
+    orderZipUrl = URL.createObjectURL(blob);
     const now = new Date();
     const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
     const safeName = orderName.replace(/[^a-zA-Z0-9가-힣_-]/g, "");
     const namePart = safeName ? `-${safeName}` : "";
     const tempLink = document.createElement("a");
     tempLink.href = orderZipUrl;
-    tempLink.download = `palagg-order${namePart}-${stamp}.zip`;
+    tempLink.download = `palagg-order${namePart}-${stamp}.3mf`;
     tempLink.click();
 
     orderLines.length = 0;
     renderOrderSheet();
   } finally {
     placeOrderButton.textContent = "한번에 주문하기";
-    placeOrderButton.disabled = orderLines.length === 0;
+    updatePlaceOrderDisabled();
   }
 };
 
 addToOrderButton.addEventListener("click", addCurrentSelectionToOrder);
 placeOrderButton.addEventListener("click", async () => {
   try {
-    await downloadOrderAsZip();
+    await downloadOrderAs3MF();
   } catch {
     placeOrderButton.textContent = "다운로드 실패, 다시 시도";
   }

@@ -198,6 +198,291 @@ export function exportMultiBodyManifold(bodies: MultiBodyPart[]): Blob {
   });
 }
 
+// ─── Build Plate Export (single 3MF with all order items) ───
+
+export interface BuildPlateGroup {
+  bodies: MultiBodyPart[];
+  quantity: number;
+  name?: string;
+}
+
+interface Placement {
+  groupIndex: number;
+  plate: number;
+  tx: number;
+  ty: number;
+}
+
+interface GroupBBox {
+  minX: number;
+  minY: number;
+  minZ: number;
+  maxX: number;
+  maxY: number;
+  maxZ: number;
+  width: number;
+  depth: number;
+}
+
+function computeGroupBBox(bodies: MultiBodyPart[]): GroupBBox {
+  let minX = Infinity,
+    minY = Infinity,
+    minZ = Infinity;
+  let maxX = -Infinity,
+    maxY = -Infinity,
+    maxZ = -Infinity;
+  for (const { manifold } of bodies) {
+    const bb = manifold.boundingBox();
+    minX = Math.min(minX, bb.min[0]);
+    minY = Math.min(minY, bb.min[1]);
+    minZ = Math.min(minZ, bb.min[2]);
+    maxX = Math.max(maxX, bb.max[0]);
+    maxY = Math.max(maxY, bb.max[1]);
+    maxZ = Math.max(maxZ, bb.max[2]);
+  }
+  return {
+    minX,
+    minY,
+    minZ,
+    maxX,
+    maxY,
+    maxZ,
+    width: maxX - minX,
+    depth: maxY - minY,
+  };
+}
+
+const BUILD_PLATE_W = 200;
+const BUILD_PLATE_D = 200;
+const BUILD_PLATE_GAP = 5;
+/** X offset per plate in global coords (matches Bambu Studio pattern). */
+const PLATE_SPACING = BUILD_PLATE_W + 140;
+
+/**
+ * Shelf bin-packing: sort items by depth descending, place left→right,
+ * wrap to next shelf when row is full, advance to next plate when plate overflows.
+ */
+function layoutOnBuildPlate(
+  groups: BuildPlateGroup[],
+  bboxes: GroupBBox[],
+  plateW = BUILD_PLATE_W,
+  plateD = BUILD_PLATE_D,
+  gap = BUILD_PLATE_GAP,
+): Placement[] {
+  const items: { groupIndex: number; width: number; depth: number }[] = [];
+  for (let i = 0; i < groups.length; i++) {
+    for (let q = 0; q < groups[i].quantity; q++) {
+      items.push({
+        groupIndex: i,
+        width: bboxes[i].width,
+        depth: bboxes[i].depth,
+      });
+    }
+  }
+  items.sort((a, b) => b.depth - a.depth);
+
+  const placements: Placement[] = [];
+  let plate = 0,
+    curX = 0,
+    curY = 0,
+    shelfH = 0;
+
+  for (const item of items) {
+    if (curX + item.width > plateW) {
+      curY += shelfH + gap;
+      curX = 0;
+      shelfH = 0;
+    }
+    if (curY + item.depth > plateD) {
+      plate++;
+      curX = 0;
+      curY = 0;
+      shelfH = 0;
+    }
+    placements.push({ groupIndex: item.groupIndex, plate, tx: curX, ty: curY });
+    curX += item.width + gap;
+    shelfH = Math.max(shelfH, item.depth);
+  }
+  return placements;
+}
+
+function extractVertices(manifold: Manifold): {
+  vertices: Float32Array;
+  indices: Uint32Array;
+} {
+  const m = manifold.getMesh();
+  const np = m.numProp;
+  if (np === 3) return { vertices: m.vertProperties, indices: m.triVerts };
+  const vertices = new Float32Array(m.numVert * 3);
+  for (let i = 0; i < m.numVert; i++) {
+    vertices[i * 3] = m.vertProperties[i * np];
+    vertices[i * 3 + 1] = m.vertProperties[i * np + 1];
+    vertices[i * 3 + 2] = m.vertProperties[i * np + 2];
+  }
+  return { vertices, indices: m.triVerts };
+}
+
+/**
+ * Export all order groups onto 200×200mm build plates as a single 3MF.
+ * Identical groups reuse the same mesh objects (geometry deduplication).
+ * Includes Bambu Studio model_settings.config for multi-plate + multi-color.
+ */
+export function exportBuildPlate3MF(groups: BuildPlateGroup[]): Blob {
+  const bboxes = groups.map((g) => computeGroupBBox(g.bodies));
+  const placements = layoutOnBuildPlate(groups, bboxes);
+
+  // ── ID assignment ──
+  // Mesh object IDs: sequential from 1, one per body per unique group
+  const groupMeshStart: number[] = [];
+  let nextId = 1;
+  for (let g = 0; g < groups.length; g++) {
+    groupMeshStart[g] = nextId;
+    nextId += groups[g].bodies.length;
+  }
+  // Assembly object IDs: one per PLACEMENT (not per group).
+  // Bambu Studio needs a unique assembly ID per instance so that
+  // model_settings.config can assign name + extruder to each one.
+  // Mesh objects are still shared across assemblies of the same group.
+  const placementAsmId: number[] = [];
+  for (let i = 0; i < placements.length; i++) {
+    placementAsmId[i] = nextId++;
+  }
+  // Collect unique colors for basematerials
+  const colors: string[] = [];
+  for (const group of groups) {
+    for (const body of group.bodies) {
+      if (body.color && !colors.includes(body.color)) colors.push(body.color);
+    }
+  }
+  const matId = colors.length > 0 ? nextId++ : -1;
+
+  // ── 3D Model XML ──
+  let model = '<?xml version="1.0" encoding="UTF-8"?>\n';
+  model +=
+    '<model unit="millimeter" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02">\n';
+  model += "<resources>\n";
+
+  // Basematerials (only when colored bodies exist)
+  if (colors.length > 0) {
+    model += `<basematerials id="${matId}">\n`;
+    for (const c of colors) {
+      const hex = c.startsWith("#") ? c : `#${c}`;
+      const dc = hex.length === 7 ? hex + "FF" : hex;
+      model += `  <base name="${hex}" displaycolor="${dc}" />\n`;
+    }
+    model += "</basematerials>\n";
+  }
+
+  // Mesh objects: one per body per unique group (shared across placements)
+  for (let g = 0; g < groups.length; g++) {
+    for (let b = 0; b < groups[g].bodies.length; b++) {
+      const body = groups[g].bodies[b];
+      const id = groupMeshStart[g] + b;
+      const { vertices, indices } = extractVertices(body.manifold);
+
+      model += `<object id="${id}" type="model" name="${body.name}">\n`;
+      model += "<mesh>\n<vertices>\n";
+      for (let i = 0; i < vertices.length; i += 3) {
+        model += `<vertex x="${vertices[i]}" y="${vertices[i + 1]}" z="${vertices[i + 2]}" />\n`;
+      }
+      model += "</vertices>\n<triangles>\n";
+
+      const colorIdx = body.color ? colors.indexOf(body.color) : -1;
+      for (let i = 0; i < indices.length; i += 3) {
+        if (colorIdx >= 0) {
+          model += `<triangle v1="${indices[i]}" v2="${indices[i + 1]}" v3="${indices[i + 2]}" pid="${matId}" p1="${colorIdx}" p2="${colorIdx}" p3="${colorIdx}" />\n`;
+        } else {
+          model += `<triangle v1="${indices[i]}" v2="${indices[i + 1]}" v3="${indices[i + 2]}" />\n`;
+        }
+      }
+      model += "</triangles>\n</mesh>\n</object>\n";
+    }
+  }
+
+  // Assembly objects: one per PLACEMENT, referencing its group's mesh objects
+  for (let i = 0; i < placements.length; i++) {
+    const g = placements[i].groupIndex;
+    model += `<object id="${placementAsmId[i]}" type="model">\n<components>\n`;
+    for (let b = 0; b < groups[g].bodies.length; b++) {
+      model += `<component objectid="${groupMeshStart[g] + b}" />\n`;
+    }
+    model += "</components>\n</object>\n";
+  }
+
+  model += "</resources>\n<build>\n";
+
+  // Build items: one per placement, each with its own assembly + transform.
+  // Bambu Studio uses GLOBAL coordinates — plate N items are X-offset by
+  // N * PLATE_SPACING so the slicer can distinguish plates spatially.
+  for (let i = 0; i < placements.length; i++) {
+    const p = placements[i];
+    const bb = bboxes[p.groupIndex];
+    const tx = p.tx - bb.minX + p.plate * PLATE_SPACING;
+    const ty = p.ty - bb.minY;
+    const tz = -bb.minZ;
+    model += `<item objectid="${placementAsmId[i]}" transform="1 0 0 0 1 0 0 0 1 ${tx} ${ty} ${tz}" />\n`;
+  }
+  model += "</build>\n</model>\n";
+
+  // ── Model Settings (Bambu Studio multi-plate + multi-color) ──
+  let settings = '<?xml version="1.0" encoding="UTF-8"?>\n<config>\n';
+
+  // One <object> per placement assembly — each gets its own name + extruder
+  for (let i = 0; i < placements.length; i++) {
+    const g = placements[i].groupIndex;
+    const name = groups[g].name ?? groups[g].bodies[0]?.name ?? `part-${g}`;
+    settings += `<object id="${placementAsmId[i]}">\n`;
+    settings += `  <metadata key="name" value="${name}"/>\n`;
+    settings += '  <metadata key="extruder" value="1"/>\n';
+    for (let b = 0; b < groups[g].bodies.length; b++) {
+      const body = groups[g].bodies[b];
+      settings += `  <part id="${groupMeshStart[g] + b}" subtype="normal_part">\n`;
+      settings += `    <metadata key="name" value="${body.name}"/>\n`;
+      settings += `    <metadata key="extruder" value="${body.color ? "2" : "1"}"/>\n`;
+      settings += "  </part>\n";
+    }
+    settings += "</object>\n";
+  }
+
+  // Plate entries: group placements by plate number
+  const plateMap = new Map<number, number[]>();
+  for (let i = 0; i < placements.length; i++) {
+    const pn = placements[i].plate;
+    if (!plateMap.has(pn)) plateMap.set(pn, []);
+    plateMap.get(pn)!.push(i);
+  }
+
+  for (const [plateNum, indices] of [...plateMap.entries()].sort(
+    (a, b) => a[0] - b[0],
+  )) {
+    settings += "<plate>\n";
+    settings += `  <metadata key="plater_id" value="${plateNum + 1}"/>\n`;
+    settings += '  <metadata key="locked" value="false"/>\n';
+    for (const idx of indices) {
+      settings += "  <model_instance>\n";
+      settings += `    <metadata key="object_id" value="${placementAsmId[idx]}"/>\n`;
+      settings += '    <metadata key="instance_id" value="0"/>\n';
+      settings += '    <metadata key="identify_id" value="0"/>\n';
+      settings += "  </model_instance>\n";
+    }
+    settings += "</plate>\n";
+  }
+  settings += "</config>\n";
+
+  // ── ZIP package ──
+  const files: Zippable = {};
+  const fileForRelThumbnail = new FileForRelThumbnail();
+  fileForRelThumbnail.add3dModel("3D/3dmodel.model");
+  files["3D/3dmodel.model"] = strToU8(model);
+  files["Metadata/model_settings.config"] = strToU8(settings);
+  files[fileForContentTypes.name] = strToU8(fileForContentTypes.content);
+  files[fileForRelThumbnail.name] = strToU8(fileForRelThumbnail.content);
+
+  return new Blob([zipSync(files)], {
+    type: "application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
+  });
+}
+
 export function mesh2geometry(manifold: Manifold): THREE.BufferGeometry {
   const mesh = manifold.getMesh();
   const geometry = new THREE.BufferGeometry();
