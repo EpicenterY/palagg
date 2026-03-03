@@ -14,7 +14,9 @@ import { EMOJI_PRESETS } from "./model/emoji";
 
 import { Dyn } from "twrl";
 
-import { rangeControl, stepper, toggleControl, textInput, emojiPicker } from "./controls";
+import { rangeControl, stepper, toggleControl, textInput, emojiPicker, addEmojiButton } from "./controls";
+import { searchIcons, fetchIconData, iconifyToPreset } from "./iconify";
+import { loadCustomIcons, saveCustomIcon } from "./icon-store";
 
 /// CONSTANTS
 
@@ -579,6 +581,166 @@ function promptOrderName(): Promise<string | null> {
   });
 }
 
+function openIconSearchModal(): Promise<import("./model/emoji").EmojiPreset | null> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+
+    const dialog = document.createElement("div");
+    dialog.className = "modal-dialog icon-search-dialog";
+
+    const title = document.createElement("h3");
+    title.className = "modal-title";
+    title.textContent = "Search Icons";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "modal-input";
+    input.placeholder = "Search Material Symbols...";
+
+    const status = document.createElement("div");
+    status.className = "icon-search-status";
+    status.textContent = "";
+
+    const grid = document.createElement("div");
+    grid.className = "icon-search-grid";
+
+    const buttons = document.createElement("div");
+    buttons.className = "modal-buttons";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "modal-btn modal-btn-cancel";
+    cancelBtn.textContent = "Cancel";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "modal-btn modal-btn-confirm";
+    confirmBtn.textContent = "Select";
+    confirmBtn.disabled = true;
+
+    buttons.append(cancelBtn, confirmBtn);
+    dialog.append(title, input, status, grid, buttons);
+    overlay.append(dialog);
+    document.body.append(overlay);
+
+    requestAnimationFrame(() => overlay.classList.add("is-visible"));
+    input.focus();
+
+    let selected: import("./model/emoji").EmojiPreset | null = null;
+    let debounceTimer: ReturnType<typeof setTimeout> | undefined;
+
+    const cleanup = (result: typeof selected) => {
+      overlay.classList.remove("is-visible");
+      overlay.addEventListener("transitionend", () => overlay.remove(), { once: true });
+      resolve(result);
+    };
+
+    // Render search results
+    const renderResults = (
+      presets: { preset: import("./model/emoji").EmojiPreset; body: string }[],
+    ) => {
+      grid.innerHTML = "";
+      for (const { preset, body } of presets) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.className = "icon-search-item";
+        btn.title = preset.label;
+        btn.setAttribute("aria-label", preset.label);
+
+        // Render using the raw SVG body for visual accuracy
+        const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+        const vb = preset.viewBox;
+        svg.setAttribute("viewBox", `${vb[0]} ${vb[1]} ${vb[2]} ${vb[3]}`);
+        svg.setAttribute("fill", "currentColor");
+        svg.innerHTML = body;
+        btn.appendChild(svg);
+
+        btn.addEventListener("click", () => {
+          grid.querySelectorAll(".selected").forEach((el) => el.classList.remove("selected"));
+          btn.classList.add("selected");
+          selected = preset;
+          confirmBtn.disabled = false;
+        });
+
+        grid.appendChild(btn);
+      }
+    };
+
+    // Search handler with debounce
+    input.addEventListener("input", () => {
+      clearTimeout(debounceTimer);
+      const query = input.value.trim();
+      if (!query) {
+        status.textContent = "";
+        grid.innerHTML = "";
+        selected = null;
+        confirmBtn.disabled = true;
+        return;
+      }
+      status.textContent = "Searching...";
+      debounceTimer = setTimeout(async () => {
+        try {
+          const result = await searchIcons(query);
+          if (result.icons.length === 0) {
+            status.textContent = "No results found.";
+            grid.innerHTML = "";
+            selected = null;
+            confirmBtn.disabled = true;
+            return;
+          }
+          // Extract prefix and icon names
+          const iconsByPrefix = new Map<string, string[]>();
+          for (const icon of result.icons) {
+            const [prefix, name] = icon.split(":");
+            if (!iconsByPrefix.has(prefix)) iconsByPrefix.set(prefix, []);
+            iconsByPrefix.get(prefix)!.push(name);
+          }
+
+          const presets: { preset: import("./model/emoji").EmojiPreset; body: string }[] = [];
+          for (const [prefix, names] of iconsByPrefix) {
+            const data = await fetchIconData(prefix, names);
+            const defaultW = data.width ?? 24;
+            const defaultH = data.height ?? 24;
+            for (const name of names) {
+              const iconData = data.icons[name];
+              if (!iconData) continue;
+              const fullName = `${prefix}:${name}`;
+              const label = name.replace(/-/g, " ");
+              const preset = iconifyToPreset(
+                fullName,
+                label,
+                iconData.body,
+                defaultW,
+                defaultH,
+                iconData.width,
+                iconData.height,
+              );
+              presets.push({ preset, body: iconData.body });
+            }
+          }
+
+          status.textContent = `${presets.length} icons found`;
+          selected = null;
+          confirmBtn.disabled = true;
+          renderResults(presets);
+        } catch {
+          status.textContent = "Search failed. Please try again.";
+        }
+      }, 400);
+    });
+
+    confirmBtn.addEventListener("click", () => cleanup(selected));
+    cancelBtn.addEventListener("click", () => cleanup(null));
+    overlay.addEventListener("click", (e) => {
+      if (e.target === overlay) cleanup(null);
+    });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") cleanup(null);
+    });
+  });
+}
+
 const downloadOrderAsZip = async () => {
   if (orderLines.length === 0) return;
 
@@ -785,6 +947,12 @@ const tagWidthControl = rangeControl("tag-width", {
   sliderMax: String(TAG_MAX_WIDTH),
 });
 controls.append(tagWidthControl.wrapper);
+
+// Restore custom icons from localStorage before building emoji picker
+const customIcons = loadCustomIcons();
+for (const icon of customIcons) {
+  if (!EMOJI_PRESETS.find((p) => p.id === icon.id)) EMOJI_PRESETS.push(icon);
+}
 
 const tagEmojiControl = emojiPicker("tag-emoji", EMOJI_PRESETS);
 controls.append(tagEmojiControl.wrapper);
@@ -1037,16 +1205,14 @@ tagTextControl.input.addEventListener("input", () => {
   });
 });
 
-// Tag emoji picker
-tagEmojiControl.buttons.forEach((btn) => {
+// Shared emoji toggle logic for any emoji button
+const wireEmojiButton = (btn: HTMLButtonElement) => {
   btn.addEventListener("click", () => {
     const emojiId = btn.dataset.emojiId!;
     if (tagEmoji.latest === emojiId) {
-      // Deselect
       tagEmoji.send(null);
     } else {
       tagEmoji.send(emojiId);
-      // Clear text when emoji is selected
       tagText.send("");
       tagTextControl.input.value = "";
       lastValidTagText = "";
@@ -1054,6 +1220,40 @@ tagEmojiControl.buttons.forEach((btn) => {
       tagTextControl.counter.classList.remove("at-limit");
     }
   });
+};
+
+// Tag emoji picker
+tagEmojiControl.buttons.forEach(wireEmojiButton);
+
+// "+" button — open icon search modal
+tagEmojiControl.moreButton.addEventListener("click", async () => {
+  const preset = await openIconSearchModal();
+  if (!preset) return;
+
+  // Add to global presets array (for downstream find())
+  if (!EMOJI_PRESETS.find((p) => p.id === preset.id)) {
+    EMOJI_PRESETS.push(preset);
+  }
+
+  // Persist to localStorage
+  saveCustomIcon(preset);
+
+  // Add button to DOM (unless it already exists)
+  const existing = tagEmojiControl.grid.querySelector(
+    `button[data-emoji-id="${CSS.escape(preset.id)}"]`,
+  );
+  if (!existing) {
+    const btn = addEmojiButton(
+      tagEmojiControl.grid,
+      tagEmojiControl.moreButton,
+      preset,
+    );
+    tagEmojiControl.buttons.push(btn);
+    wireEmojiButton(btn);
+  }
+
+  // Select the new icon immediately
+  tagEmoji.send(preset.id);
 });
 
 // Update emoji button selection state

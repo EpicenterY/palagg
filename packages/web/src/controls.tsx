@@ -138,33 +138,49 @@ export const textInput = (
 export const emojiPicker = (
   id: string,
   presets: EmojiPreset[],
-): { wrapper: HTMLElement; buttons: HTMLButtonElement[] } => {
+): {
+  wrapper: HTMLElement;
+  buttons: HTMLButtonElement[];
+  grid: HTMLDivElement;
+  moreButton: HTMLButtonElement;
+} => {
   const buttons: HTMLButtonElement[] = [];
 
   const grid = document.createElement("div");
   grid.className = "emoji-grid";
 
   for (const preset of presets) {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.dataset.emojiId = preset.id;
-    btn.title = preset.label;
-    btn.setAttribute("aria-label", preset.label);
-
-    // Render SVG icon
-    const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-    svg.setAttribute("viewBox", preset.viewBox.join(" "));
-    svg.setAttribute("fill", "currentColor");
-    svg.setAttribute("width", "20");
-    svg.setAttribute("height", "20");
-    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-    path.setAttribute("d", preset.svg);
-    svg.appendChild(path);
-    btn.appendChild(svg);
-
+    const btn = createEmojiButton(preset);
     buttons.push(btn);
     grid.appendChild(btn);
   }
+
+  // "+" button at the end of the grid
+  const moreButton = document.createElement("button");
+  moreButton.type = "button";
+  moreButton.className = "emoji-more-btn";
+  moreButton.title = "Search icons";
+  moreButton.setAttribute("aria-label", "Search icons");
+  const plusSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  plusSvg.setAttribute("viewBox", "0 0 24 24");
+  plusSvg.setAttribute("fill", "none");
+  plusSvg.setAttribute("stroke", "currentColor");
+  plusSvg.setAttribute("stroke-width", "2.5");
+  plusSvg.setAttribute("width", "18");
+  plusSvg.setAttribute("height", "18");
+  const plusLine1 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  plusLine1.setAttribute("x1", "12");
+  plusLine1.setAttribute("y1", "5");
+  plusLine1.setAttribute("x2", "12");
+  plusLine1.setAttribute("y2", "19");
+  const plusLine2 = document.createElementNS("http://www.w3.org/2000/svg", "line");
+  plusLine2.setAttribute("x1", "5");
+  plusLine2.setAttribute("y1", "12");
+  plusLine2.setAttribute("x2", "19");
+  plusLine2.setAttribute("y2", "12");
+  plusSvg.append(plusLine1, plusLine2);
+  moreButton.appendChild(plusSvg);
+  grid.appendChild(moreButton);
 
   const label = document.createElement("label");
   label.textContent = "Icon";
@@ -174,6 +190,37 @@ export const emojiPicker = (
   wrapper.className = "emoji-picker-wrapper";
   wrapper.append(label, grid);
 
-  return { wrapper, buttons };
+  return { wrapper, buttons, grid, moreButton };
 };
+
+function createEmojiButton(preset: EmojiPreset): HTMLButtonElement {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.dataset.emojiId = preset.id;
+  btn.title = preset.label;
+  btn.setAttribute("aria-label", preset.label);
+
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("viewBox", preset.viewBox.join(" "));
+  svg.setAttribute("fill", "currentColor");
+  svg.setAttribute("width", "20");
+  svg.setAttribute("height", "20");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", preset.svg);
+  svg.appendChild(path);
+  btn.appendChild(svg);
+
+  return btn;
+}
+
+/** Insert a new emoji button into the grid (before the "+" button) */
+export function addEmojiButton(
+  grid: HTMLDivElement,
+  moreButton: HTMLButtonElement,
+  preset: EmojiPreset,
+): HTMLButtonElement {
+  const btn = createEmojiButton(preset);
+  grid.insertBefore(btn, moreButton);
+  return btn;
+}
 
