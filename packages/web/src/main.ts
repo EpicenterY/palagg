@@ -226,7 +226,7 @@ const filenameForSnapshot = (snapshot: ModelSnapshot) => {
     return `palagg-tag-${snapshot.width}-${safeName || "text"}`;
   }
   return snapshot.shape === "organizer"
-    ? `palagg-organizer-${snapshot.width}-${snapshot.depth}-${snapshot.height}.3mf`
+    ? `palagg-grid-${snapshot.width}-${snapshot.depth}-${snapshot.height}.3mf`
     : `palagg-${snapshot.width}-${snapshot.depth}-${snapshot.height}.3mf`;
 };
 
@@ -524,8 +524,66 @@ const addCurrentSelectionToOrder = () => {
   renderOrderSheet();
 };
 
+function promptOrderName(): Promise<string | null> {
+  return new Promise((resolve) => {
+    const overlay = document.createElement("div");
+    overlay.className = "modal-overlay";
+
+    const dialog = document.createElement("div");
+    dialog.className = "modal-dialog";
+
+    const title = document.createElement("h3");
+    title.className = "modal-title";
+    title.textContent = "주문자 이름";
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "modal-input";
+    input.placeholder = "이름을 입력하세요";
+    input.maxLength = 30;
+
+    const buttons = document.createElement("div");
+    buttons.className = "modal-buttons";
+
+    const cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "modal-btn modal-btn-cancel";
+    cancelBtn.textContent = "취소";
+
+    const confirmBtn = document.createElement("button");
+    confirmBtn.type = "button";
+    confirmBtn.className = "modal-btn modal-btn-confirm";
+    confirmBtn.textContent = "다운로드";
+
+    buttons.append(cancelBtn, confirmBtn);
+    dialog.append(title, input, buttons);
+    overlay.append(dialog);
+    document.body.append(overlay);
+
+    requestAnimationFrame(() => overlay.classList.add("is-visible"));
+    input.focus();
+
+    const cleanup = (result: string | null) => {
+      overlay.classList.remove("is-visible");
+      overlay.addEventListener("transitionend", () => overlay.remove(), { once: true });
+      resolve(result);
+    };
+
+    confirmBtn.addEventListener("click", () => cleanup(input.value.trim()));
+    cancelBtn.addEventListener("click", () => cleanup(null));
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) cleanup(null); });
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter") cleanup(input.value.trim());
+      if (e.key === "Escape") cleanup(null);
+    });
+  });
+}
+
 const downloadOrderAsZip = async () => {
   if (orderLines.length === 0) return;
+
+  const orderName = await promptOrderName();
+  if (orderName === null) return;
 
   placeOrderButton.disabled = true;
   placeOrderButton.textContent = "주문 파일 생성 중...";
@@ -578,9 +636,11 @@ const downloadOrderAsZip = async () => {
     orderZipUrl = URL.createObjectURL(zipBlob);
     const now = new Date();
     const stamp = `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, "0")}${String(now.getDate()).padStart(2, "0")}-${String(now.getHours()).padStart(2, "0")}${String(now.getMinutes()).padStart(2, "0")}`;
+    const safeName = orderName.replace(/[^a-zA-Z0-9가-힣_-]/g, "");
+    const namePart = safeName ? `-${safeName}` : "";
     const tempLink = document.createElement("a");
     tempLink.href = orderZipUrl;
-    tempLink.download = `palagg-order-${stamp}.zip`;
+    tempLink.download = `palagg-order${namePart}-${stamp}.zip`;
     tempLink.click();
 
     orderLines.length = 0;
@@ -713,7 +773,7 @@ controls.append(colsControl);
 // Tag-only controls
 const tagTextControl = textInput("tag-text", {
   label: "Text",
-  placeholder: "이름을 입력하세요",
+  placeholder: "마음 가는 대로 적어보세요!",
 });
 controls.append(tagTextControl.wrapper);
 
