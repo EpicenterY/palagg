@@ -1,4 +1,5 @@
 declare module "@jscadui/3mf-export";
+declare module "opentype.js";
 
 declare module "*.wasm?url";
 

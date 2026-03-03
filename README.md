@@ -1,6 +1,6 @@
-# SKÅPA — wedraw 토핑 파츠 메이커
+# Palagg — wedraw 토핑 파츠 메이커
 
-**IKEA SKÅDIS 페그보드 전용 3D 파츠 생성기**
+**Wedraw의 IKEA SKÅDIS 전용 3D 파츠 생성기, PÅLÄGG**
 
 <br/>
 <br/>
@@ -35,7 +35,7 @@
 ## 프로젝트 구조
 
 ```
-skapa/
+palagg/
 ├── packages/
 │   └── web/                    — 프론트엔드 (Vite SPA)
 │       ├── src/

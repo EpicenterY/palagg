@@ -944,3 +944,110 @@ footer ul {
   cursor: not-allowed;
 }
 
+/* ── Tag Controls ────────────────────────────────────────── */
+
+/* Text input */
+.text-input-wrapper {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 1em;
+}
+
+.text-input-wrapper label {
+  min-width: var(--label-width);
+  flex-shrink: 0;
+  font-weight: 500;
+  font-size: 0.95em;
+}
+
+.text-input-wrapper input[type="text"] {
+  flex: 1;
+  min-width: 0;
+  padding: 0.45em 0.65em;
+  font-size: 1em;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  color: var(--color-text);
+  background: var(--color-bg);
+  border: 1.5px solid var(--color-neutral-light);
+  border-radius: var(--radius-sm);
+  outline: none;
+  transition: border-color 0.15s;
+}
+
+.text-input-wrapper input[type="text"]:focus {
+  border-color: var(--color-primary);
+}
+
+.text-input-wrapper input[type="text"]::placeholder {
+  color: var(--color-disabled);
+}
+
+/* Emoji picker */
+.emoji-picker-wrapper {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6em;
+}
+
+.emoji-picker-wrapper > label {
+  min-width: var(--label-width);
+  flex-shrink: 0;
+  font-weight: 500;
+  font-size: 0.95em;
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(2.5em, 1fr));
+  gap: 4px;
+}
+
+.emoji-grid button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  aspect-ratio: 1;
+  padding: 0;
+  border: 1.5px solid var(--color-neutral-light);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+
+.emoji-grid button:hover {
+  border-color: var(--color-neutral);
+  color: var(--color-text);
+}
+
+.emoji-grid button.selected {
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+  background: var(--color-accent-light);
+}
+
+.emoji-grid button svg {
+  width: 1.15em;
+  height: 1.15em;
+}
+
+@media (width < 600px) {
+  .text-input-wrapper {
+    display: grid !important;
+    grid-template-columns: 1fr;
+    gap: 0.3em;
+  }
+
+  .text-input-wrapper label {
+    min-width: 0;
+  }
+
+  .emoji-grid {
+    grid-template-columns: repeat(auto-fill, minmax(2.2em, 1fr));
+  }
+}
+

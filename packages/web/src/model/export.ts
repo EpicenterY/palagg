@@ -34,7 +34,7 @@ interface Header {
   modificationDate?: string;
 }
 
-export function exportManifold(manifold: Manifold): Blob {
+export function exportManifoldBytes(manifold: Manifold): Uint8Array {
   const manifoldMesh = manifold.getMesh();
 
   const vertices =
@@ -73,11 +73,30 @@ export function exportManifold(manifold: Manifold): Blob {
   files["3D/3dmodel.model"] = strToU8(model);
   files[fileForContentTypes.name] = strToU8(fileForContentTypes.content);
   files[fileForRelThumbnail.name] = strToU8(fileForRelThumbnail.content);
-  const zipFile = zipSync(files);
+  return zipSync(files);
+}
 
+export function exportManifold(manifold: Manifold): Blob {
+  const zipFile = exportManifoldBytes(manifold);
   return new Blob([zipFile], {
     type: "application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
   });
+}
+
+export function exportTagParts(
+  body: Manifold,
+  plate: Manifold,
+  baseFilename: string,
+): Blob {
+  const bodyBytes = exportManifoldBytes(body);
+  const plateBytes = exportManifoldBytes(plate);
+
+  const files: Zippable = {};
+  files[`${baseFilename}-body.3mf`] = bodyBytes;
+  files[`${baseFilename}-plate.3mf`] = plateBytes;
+  const zipFile = zipSync(files);
+
+  return new Blob([zipFile], { type: "application/zip" });
 }
 
 export function mesh2geometry(manifold: Manifold): THREE.BufferGeometry {

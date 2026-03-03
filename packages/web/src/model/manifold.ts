@@ -8,7 +8,7 @@ import manifold_wasm from "manifold-3d/manifold.wasm?url";
 export const CLIP_HEIGHT = 12;
 
 // Load manifold 3d
-class ManifoldModule {
+export class ManifoldModule {
   private static wasm: ManifoldToplevel | undefined = undefined;
   static async get(): Promise<ManifoldToplevel> {
     if (this.wasm !== undefined) {
@@ -48,7 +48,7 @@ function generateArc({
 }
 
 // Rounded rect centered at (0,0)
-async function roundedRectangle(
+export async function roundedRectangle(
   size: Vec2,
   cornerRadius: number,
 ): Promise<CrossSection> {
@@ -137,7 +137,7 @@ export async function base(
 
 const DIVIDER_THICKNESS = 1.5; // mm
 
-async function applySkadisHooks(
+export async function applySkadisHooks(
   model: Manifold,
   height: number,
   width: number,

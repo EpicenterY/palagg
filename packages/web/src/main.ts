@@ -4,14 +4,16 @@ import * as THREE from "three";
 import { Renderer } from "./rendering/renderer";
 
 import { CLIP_HEIGHT, box, drawerOrganizer } from "./model/manifold";
-import { exportManifold, mesh2geometry } from "./model/export";
+import { exportManifold, exportManifoldBytes, exportTagParts, mesh2geometry } from "./model/export";
 import { TMFLoader } from "./model/load";
 import { Animate, immediate } from "./animate";
 import { zipSync } from "fflate";
+import { tagBody, tagTextPlate, tagPreview, TAG_DEFAULT_WIDTH, TAG_MIN_WIDTH, TAG_MAX_WIDTH } from "./model/tag";
+import { EMOJI_PRESETS } from "./model/emoji";
 
 import { Dyn } from "twrl";
 
-import { rangeControl, stepper, toggleControl } from "./controls";
+import { rangeControl, stepper, toggleControl, textInput, emojiPicker } from "./controls";
 
 /// CONSTANTS
 
@@ -27,7 +29,7 @@ const DIMENSIONS = [
   "bottom",
 ] as const;
 
-type ShapeType = "box" | "organizer";
+type ShapeType = "box" | "organizer" | "tag";
 
 // constants, all in outer dimensions (when applicable)
 
@@ -72,6 +74,12 @@ const topExtra = new Dyn(START_TOP_EXTRA); /* extra body height above top hook *
 
 const cols = new Dyn(START_COLS);
 const rows = new Dyn(START_ROWS);
+
+// Tag state
+const tagText = new Dyn<string>("");
+const tagEmoji = new Dyn<string | null>(null);
+const tagWidth = new Dyn(TAG_DEFAULT_WIDTH);
+let tagTextDebounceTimer: ReturnType<typeof setTimeout> | undefined;
 
 const baseHeight = levels.map(
   (x) => x * CLIP_HEIGHT + (x - 1) * (40 - CLIP_HEIGHT),
@@ -137,6 +145,8 @@ interface ModelSnapshot {
   bottom: number;
   cols: number;
   rows: number;
+  tagText: string;
+  tagEmoji: string | null;
 }
 
 interface OrderLine {
@@ -158,23 +168,30 @@ const snapshotKey = (snapshot: ModelSnapshot) =>
     snapshot.bottom,
     snapshot.cols,
     snapshot.rows,
+    snapshot.tagText,
+    snapshot.tagEmoji ?? "",
   ].join("|");
 
 const buildSnapshot = (): ModelSnapshot => ({
   shape: shapeType.latest,
   height: modelDimensions.height.latest,
   topExtra: topExtra.latest,
-  width: modelDimensions.width.latest,
+  width: shapeType.latest === "tag" ? tagWidth.latest : modelDimensions.width.latest,
   depth: modelDimensions.depth.latest,
   radius: modelDimensions.radius.latest,
   wall: modelDimensions.wall.latest,
   bottom: modelDimensions.bottom.latest,
   cols: cols.latest,
   rows: rows.latest,
+  tagText: tagText.latest,
+  tagEmoji: tagEmoji.latest,
 });
 
-const modelForSnapshot = (snapshot: ModelSnapshot) =>
-  snapshot.shape === "organizer"
+const modelForSnapshot = (snapshot: ModelSnapshot) => {
+  if (snapshot.shape === "tag") {
+    return tagPreview(snapshot.width, snapshot.tagText, snapshot.tagEmoji);
+  }
+  return snapshot.shape === "organizer"
     ? drawerOrganizer(
         snapshot.height,
         snapshot.width,
@@ -195,16 +212,26 @@ const modelForSnapshot = (snapshot: ModelSnapshot) =>
         snapshot.wall,
         snapshot.bottom,
       );
+};
 
-const filenameForSnapshot = (snapshot: ModelSnapshot) =>
-  snapshot.shape === "organizer"
+const filenameForSnapshot = (snapshot: ModelSnapshot) => {
+  if (snapshot.shape === "tag") return `palagg-tag-${snapshot.width}`;
+  return snapshot.shape === "organizer"
     ? `palagg-organizer-${snapshot.width}-${snapshot.depth}-${snapshot.height}.3mf`
     : `palagg-${snapshot.width}-${snapshot.depth}-${snapshot.height}.3mf`;
+};
 
-const labelForSnapshot = (snapshot: ModelSnapshot) =>
-  snapshot.shape === "organizer"
+const labelForSnapshot = (snapshot: ModelSnapshot) => {
+  if (snapshot.shape === "tag") {
+    const content = snapshot.tagEmoji
+      ? EMOJI_PRESETS.find((p) => p.id === snapshot.tagEmoji)?.label ?? snapshot.tagEmoji
+      : `"${snapshot.tagText}"`;
+    return `PÅLÄGG Tag ${snapshot.width} ${content}`;
+  }
+  return snapshot.shape === "organizer"
     ? `PÅLÄGG Grid ${snapshot.width}×${snapshot.depth}×${snapshot.height} (${snapshot.cols + 1}X${snapshot.rows + 1})`
     : `PÅLÄGG Box ${snapshot.width}×${snapshot.depth}×${snapshot.height}`;
+};
 
 // Reloads the model seen on page
 async function reloadModel(
@@ -219,28 +246,32 @@ async function reloadModel(
   c: number,
   ro: number,
 ) {
-  const model =
-    shape === "organizer"
-      ? await drawerOrganizer(
-          height,
-          width,
-          depth,
-          radius,
-          wall,
-          bottom,
-          c,
-          ro,
-          hookReferenceHeight,
-        )
-      : await box(
-          height,
-          hookReferenceHeight,
-          width,
-          depth,
-          radius,
-          wall,
-          bottom,
-        );
+  let model;
+  if (shape === "tag") {
+    model = await tagPreview(tagWidthAnimation.current, tagText.latest, tagEmoji.latest);
+  } else if (shape === "organizer") {
+    model = await drawerOrganizer(
+      height,
+      width,
+      depth,
+      radius,
+      wall,
+      bottom,
+      c,
+      ro,
+      hookReferenceHeight,
+    );
+  } else {
+    model = await box(
+      height,
+      hookReferenceHeight,
+      width,
+      depth,
+      radius,
+      wall,
+      bottom,
+    );
+  }
   const geometry = mesh2geometry(model);
   geometry.computeVertexNormals(); // Make sure the geometry has normals
   mesh.geometry = geometry;
@@ -259,22 +290,33 @@ Dyn.sequence([
   topExtra,
   cols,
   rows,
-] as const).addListener(([shape, h, w, d, r, wa, bo, extra, c, ro]) => {
+  tagText,
+  tagEmoji,
+  tagWidth,
+] as const).addListener(([shape, h, w, d, r, wa, bo, extra, c, ro, tt, te, tw]) => {
   const snapshot: ModelSnapshot = {
     shape,
     height: h,
     topExtra: extra,
-    width: w,
+    width: shape === "tag" ? tw : w,
     depth: d,
     radius: r,
     wall: wa,
     bottom: bo,
     cols: c,
     rows: ro,
+    tagText: tt,
+    tagEmoji: te,
   };
-  const filename = filenameForSnapshot(snapshot);
-  const modelP = modelForSnapshot(snapshot);
-  tmfLoader.load(modelP, filename);
+  if (shape === "tag") {
+    // For tags, we don't use tmfLoader since download is a ZIP
+    // Just trigger reloadModelNeeded
+    reloadModelNeeded = true;
+  } else {
+    const filename = filenameForSnapshot(snapshot);
+    const modelP = modelForSnapshot(snapshot);
+    tmfLoader.load(modelP, filename);
+  }
 });
 
 /// RENDER
@@ -344,6 +386,8 @@ const animations = {
 
 const hookReferenceAnimation = new Animate(baseHeight.latest);
 
+const tagWidthAnimation = new Animate(TAG_DEFAULT_WIDTH);
+
 DIMENSIONS.forEach((dim) =>
   modelDimensions[dim].addListener((val) => {
     animations[dim].startAnimationTo(val);
@@ -363,6 +407,8 @@ const organizerAnimations = {
 cols.addListener((v) => organizerAnimations.cols.startAnimationTo(v));
 rows.addListener((v) => organizerAnimations.rows.startAnimationTo(v));
 
+tagWidth.addListener((v) => tagWidthAnimation.startAnimationTo(v));
+
 /// DOM
 
 // Download button
@@ -378,6 +424,32 @@ const orderItemsList = document.querySelector("#order-items") as HTMLUListElemen
 const orderSummary = document.querySelector(".order-sheet-title") as HTMLHeadingElement;
 const orderLines: OrderLine[] = [];
 let orderZipUrl: string | undefined;
+let tagDownloadUrl: string | undefined;
+
+// Update download button text for tag mode
+shapeType.addListener((shape) => {
+  link.textContent = "3MF 다운로드";
+});
+
+// Handle tag download via click
+link.addEventListener("click", async (e) => {
+  if (shapeType.latest !== "tag") return; // Let default <a> behavior handle non-tag
+  e.preventDefault();
+
+  const snapshot = buildSnapshot();
+  const baseName = filenameForSnapshot(snapshot);
+  const body = await tagBody(snapshot.width);
+  const plate = await tagTextPlate(snapshot.width, snapshot.tagText, snapshot.tagEmoji);
+  const blob = exportTagParts(body, plate, baseName);
+
+  if (tagDownloadUrl) URL.revokeObjectURL(tagDownloadUrl);
+  tagDownloadUrl = URL.createObjectURL(blob);
+
+  const tempLink = document.createElement("a");
+  tempLink.href = tagDownloadUrl;
+  tempLink.download = `${baseName}.zip`;
+  tempLink.click();
+});
 
 const renderOrderSheet = () => {
   const totalQuantity = orderLines.reduce((sum, line) => sum + line.quantity, 0);
@@ -433,21 +505,37 @@ const downloadOrderAsZip = async () => {
     const files: Record<string, Uint8Array> = {};
     const filenameCounts = new Map<string, number>();
     for (const line of orderLines) {
-      const model = await modelForSnapshot(line.snapshot);
-      const blob = exportManifold(model);
-      const bytes = new Uint8Array(await blob.arrayBuffer());
+      if (line.snapshot.shape === "tag") {
+        // Tag: export body + plate as separate 3mf files
+        const body = await tagBody(line.snapshot.width);
+        const plate = await tagTextPlate(line.snapshot.width, line.snapshot.tagText, line.snapshot.tagEmoji);
+        const bodyBytes = exportManifoldBytes(body);
+        const plateBytes = exportManifoldBytes(plate);
 
-      for (let i = 0; i < line.quantity; i++) {
-        const lastDot = line.filename.lastIndexOf(".");
-        const base =
-          lastDot >= 0 ? line.filename.slice(0, lastDot) : line.filename;
-        const ext = lastDot >= 0 ? line.filename.slice(lastDot) : "";
-        const count = (filenameCounts.get(line.filename) ?? 0) + 1;
-        filenameCounts.set(line.filename, count);
-        const uniqueFilename =
-          count === 1 ? line.filename : `${base}-${count}${ext}`;
+        for (let i = 0; i < line.quantity; i++) {
+          const count = (filenameCounts.get(line.filename) ?? 0) + 1;
+          filenameCounts.set(line.filename, count);
+          const suffix = count === 1 ? "" : `-${count}`;
+          files[`${line.filename}${suffix}-body.3mf`] = bodyBytes;
+          files[`${line.filename}${suffix}-plate.3mf`] = plateBytes;
+        }
+      } else {
+        const model = await modelForSnapshot(line.snapshot);
+        const blob = exportManifold(model);
+        const bytes = new Uint8Array(await blob.arrayBuffer());
 
-        files[uniqueFilename] = bytes;
+        for (let i = 0; i < line.quantity; i++) {
+          const lastDot = line.filename.lastIndexOf(".");
+          const base =
+            lastDot >= 0 ? line.filename.slice(0, lastDot) : line.filename;
+          const ext = lastDot >= 0 ? line.filename.slice(lastDot) : "";
+          const count = (filenameCounts.get(line.filename) ?? 0) + 1;
+          filenameCounts.set(line.filename, count);
+          const uniqueFilename =
+            count === 1 ? line.filename : `${base}-${count}${ext}`;
+
+          files[uniqueFilename] = bytes;
+        }
       }
     }
 
@@ -509,6 +597,7 @@ const shapeControl = toggleControl("shape", {
   options: [
     { value: "box", label: "Box" },
     { value: "organizer", label: "Grid" },
+    { value: "tag", label: "Tag" },
   ],
 });
 controls.append(shapeControl.wrapper);
@@ -593,6 +682,25 @@ const colsControl = stepper("grid-cols", {
   max: String(MAX_COLS + 1),
 });
 controls.append(colsControl);
+
+// Tag-only controls
+const tagTextControl = textInput("tag-text", {
+  label: "Text",
+  placeholder: "이름을 입력하세요",
+});
+controls.append(tagTextControl.wrapper);
+
+const tagWidthControl = rangeControl("tag-width", {
+  name: "Width",
+  min: String(TAG_MIN_WIDTH),
+  max: String(TAG_MAX_WIDTH),
+  sliderMin: String(TAG_MIN_WIDTH),
+  sliderMax: String(TAG_MAX_WIDTH),
+});
+controls.append(tagWidthControl.wrapper);
+
+const tagEmojiControl = emojiPicker("tag-emoji", EMOJI_PRESETS);
+controls.append(tagEmojiControl.wrapper);
 
 // The dimension inputs
 const inputs = {
@@ -707,10 +815,18 @@ shapeType.addListener(() => {
 
 // Show/hide controls based on shape
 const orgOnlyEls: HTMLElement[] = [rowsControl, colsControl];
+const tagOnlyEls: HTMLElement[] = [tagTextControl.wrapper, tagWidthControl.wrapper, tagEmojiControl.wrapper];
+const boxGridOnlyEls: HTMLElement[] = [levelsControl, topExtraPanel, widthControl.wrapper, depthControl.wrapper];
 
 shapeType.addListener((shape) => {
   orgOnlyEls.forEach(
     (el) => (el.style.display = shape === "organizer" ? "" : "none"),
+  );
+  tagOnlyEls.forEach(
+    (el) => (el.style.display = shape === "tag" ? "" : "none"),
+  );
+  boxGridOnlyEls.forEach(
+    (el) => (el.style.display = shape === "tag" ? "none" : ""),
   );
 });
 
@@ -772,6 +888,63 @@ cols.addListener((c) => {
 rows.addListener((r) => {
   inputs.rowsMinus.disabled = r <= 0;
   inputs.rowsPlus.disabled = r >= MAX_ROWS;
+});
+
+// Tag text input
+tagTextControl.input.addEventListener("input", () => {
+  const text = tagTextControl.input.value;
+  // Debounce text changes to avoid excessive model reloads
+  clearTimeout(tagTextDebounceTimer);
+  tagTextDebounceTimer = setTimeout(() => {
+    tagText.send(text);
+  }, 300);
+});
+
+// Tag width
+(
+  [
+    [tagWidthControl.input, "change"],
+    [tagWidthControl.range, "input"],
+  ] as const
+).forEach(([input, evnt]) => {
+  tagWidth.addListener((w) => {
+    input.value = `${w}`;
+  });
+  input.addEventListener(evnt, () => {
+    const n = parseInt(input.value);
+    if (!Number.isNaN(n))
+      tagWidth.send(Math.max(TAG_MIN_WIDTH, Math.min(n, TAG_MAX_WIDTH)));
+  });
+});
+
+// Tag emoji picker
+tagEmojiControl.buttons.forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const emojiId = btn.dataset.emojiId!;
+    if (tagEmoji.latest === emojiId) {
+      // Deselect
+      tagEmoji.send(null);
+    } else {
+      tagEmoji.send(emojiId);
+      // Clear text when emoji is selected
+      tagText.send("");
+      tagTextControl.input.value = "";
+    }
+  });
+});
+
+// Update emoji button selection state
+tagEmoji.addListener((selected) => {
+  tagEmojiControl.buttons.forEach((btn) => {
+    btn.classList.toggle("selected", btn.dataset.emojiId === selected);
+  });
+});
+
+// When text is typed, deselect emoji
+tagText.addListener((text) => {
+  if (text.trim()) {
+    tagEmoji.send(null);
+  }
 });
 
 // Add select-all on input click
@@ -937,11 +1110,15 @@ function loop(nowMillis: DOMHighResTimeStamp) {
   requestAnimationFrame(loop);
 
   // Reload 3mf if necessary
-  const newTmf = tmfLoader.take();
-  if (newTmf !== undefined) {
-    // Update the download link
-    link.href = URL.createObjectURL(newTmf.blob);
-    link.download = newTmf.filename;
+  if (shapeType.latest === "tag") {
+    // Tag download is handled via click event, not tmfLoader
+  } else {
+    const newTmf = tmfLoader.take();
+    if (newTmf !== undefined) {
+      // Update the download link
+      link.href = URL.createObjectURL(newTmf.blob);
+      link.download = newTmf.filename;
+    }
   }
 
   // Handle rotation animation
@@ -963,7 +1140,9 @@ function loop(nowMillis: DOMHighResTimeStamp) {
 
   const hookReferenceUpdated = hookReferenceAnimation.update();
 
-  if (dimensionsUpdated || organizerUpdated || hookReferenceUpdated) {
+  const tagWidthUpdated = tagWidthAnimation.update();
+
+  if (dimensionsUpdated || organizerUpdated || hookReferenceUpdated || tagWidthUpdated) {
     reloadModelNeeded = true;
   }
 
