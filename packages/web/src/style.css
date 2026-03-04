@@ -955,6 +955,20 @@ footer ul {
   }
 }
 
+@media (width < 400px) {
+  .action-buttons {
+    flex-direction: column;
+    gap: 0.5em;
+  }
+
+  .action-buttons #download,
+  #add-to-order {
+    font-size: 0.9em;
+    padding: 0.8em 0.5em;
+    white-space: nowrap;
+  }
+}
+
 @media (width < 340px) {
   .action-buttons #download,
   #add-to-order,

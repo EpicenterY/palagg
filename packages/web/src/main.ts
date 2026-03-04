@@ -4,8 +4,10 @@ import * as THREE from "three";
 import { Renderer } from "./rendering/renderer";
 
 import { CLIP_HEIGHT, box, drawerOrganizer } from "./model/manifold";
-import { exportMultiBodyManifold, exportBuildPlate3MF, mesh2geometry, computeCreaseNormals } from "./model/export";
+import { exportMultiBodyManifold, exportBuildPlate3MF, mesh2geometry, computeCreaseNormals, computeGroupBBox, layoutOnBuildPlate, BUILD_PLATE_W, BUILD_PLATE_D } from "./model/export";
 import type { BuildPlateGroup } from "./model/export";
+import { generateOrderPDF, renderThumbnail } from "./order-pdf";
+import type { OrderLineInfo } from "./order-pdf";
 import { TMFLoader } from "./model/load";
 import { Animate, immediate } from "./animate";
 import { tagPreview, tagExportBodies, TAG_DEFAULT_WIDTH, TAG_MIN_WIDTH, TAG_MAX_WIDTH, TAG_MAX_TEXT_CONTENT_WIDTH, TAG_TEXT_AREA_HEIGHT } from "./model/tag";
@@ -886,7 +888,11 @@ const downloadOrderAs3MF = async () => {
 
   try {
     const groups: BuildPlateGroup[] = [];
-    for (const line of orderLines) {
+    // Build models for each line; also generate thumbnails for PDF
+    const pdfLines: OrderLineInfo[] = [];
+
+    for (let i = 0; i < orderLines.length; i++) {
+      const line = orderLines[i];
       if (line.snapshot.shape === "tag") {
         const { bodies } = await tagExportBodies(
           line.snapshot.width,
@@ -894,12 +900,33 @@ const downloadOrderAs3MF = async () => {
           line.snapshot.tagEmoji,
         );
         groups.push({ bodies, quantity: line.quantity, name: line.filename });
+
+        // Thumbnail from first body (plate)
+        const thumb = renderThumbnail(bodies[0].manifold, line.key);
+        pdfLines.push({
+          index: i,
+          label: labelForSnapshot(line.snapshot),
+          shape: "tag",
+          snapshot: line.snapshot,
+          quantity: line.quantity,
+          thumbnailDataUrl: thumb,
+        });
       } else {
         const model = await modelForSnapshot(line.snapshot);
         groups.push({
           bodies: [{ manifold: model, name: line.filename }],
           quantity: line.quantity,
           name: line.filename,
+        });
+
+        const thumb = renderThumbnail(model, line.key);
+        pdfLines.push({
+          index: i,
+          label: labelForSnapshot(line.snapshot),
+          shape: line.snapshot.shape as "box" | "organizer",
+          snapshot: line.snapshot,
+          quantity: line.quantity,
+          thumbnailDataUrl: thumb,
         });
       }
     }
@@ -919,6 +946,28 @@ const downloadOrderAs3MF = async () => {
     tempLink.href = orderZipUrl;
     tempLink.download = `palagg-order${namePart}-${stamp}.3mf`;
     tempLink.click();
+
+    // Generate and download PDF order summary
+    const bboxes = groups.map((g) => computeGroupBBox(g.bodies));
+    const placements = layoutOnBuildPlate(groups, bboxes);
+    const pdfBlob = generateOrderPDF({
+      orderName: orderName || "",
+      lines: pdfLines,
+      placements,
+      bboxes,
+      plateW: BUILD_PLATE_W,
+      plateD: BUILD_PLATE_D,
+      date: now,
+    });
+
+    const pdfUrl = URL.createObjectURL(pdfBlob);
+    const pdfLink = document.createElement("a");
+    pdfLink.href = pdfUrl;
+    pdfLink.download = `palagg-order${namePart}-${stamp}.pdf`;
+    setTimeout(() => {
+      pdfLink.click();
+      URL.revokeObjectURL(pdfUrl);
+    }, 100);
 
     orderLines.length = 0;
     renderOrderSheet();

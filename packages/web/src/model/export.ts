@@ -206,14 +206,14 @@ export interface BuildPlateGroup {
   name?: string;
 }
 
-interface Placement {
+export interface Placement {
   groupIndex: number;
   plate: number;
   tx: number;
   ty: number;
 }
 
-interface GroupBBox {
+export interface GroupBBox {
   minX: number;
   minY: number;
   minZ: number;
@@ -224,7 +224,7 @@ interface GroupBBox {
   depth: number;
 }
 
-function computeGroupBBox(bodies: MultiBodyPart[]): GroupBBox {
+export function computeGroupBBox(bodies: MultiBodyPart[]): GroupBBox {
   let minX = Infinity,
     minY = Infinity,
     minZ = Infinity;
@@ -252,8 +252,8 @@ function computeGroupBBox(bodies: MultiBodyPart[]): GroupBBox {
   };
 }
 
-const BUILD_PLATE_W = 200;
-const BUILD_PLATE_D = 200;
+export const BUILD_PLATE_W = 200;
+export const BUILD_PLATE_D = 200;
 const BUILD_PLATE_GAP = 5;
 /** X offset per plate in global coords (matches Bambu Studio pattern). */
 const PLATE_SPACING = BUILD_PLATE_W + 140;
@@ -262,7 +262,7 @@ const PLATE_SPACING = BUILD_PLATE_W + 140;
  * Shelf bin-packing: sort items by depth descending, place left→right,
  * wrap to next shelf when row is full, advance to next plate when plate overflows.
  */
-function layoutOnBuildPlate(
+export function layoutOnBuildPlate(
   groups: BuildPlateGroup[],
   bboxes: GroupBBox[],
   plateW = BUILD_PLATE_W,
