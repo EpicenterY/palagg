@@ -4,7 +4,7 @@ import * as THREE from "three";
 import { Renderer } from "./rendering/renderer";
 
 import { CLIP_HEIGHT, box, drawerOrganizer } from "./model/manifold";
-import { exportMultiBodyManifold, exportBuildPlate3MF, mesh2geometry, computeCreaseNormals, computeGroupBBox, layoutOnBuildPlate, BUILD_PLATE_W, BUILD_PLATE_D } from "./model/export";
+import { exportMultiBodyManifold, exportBuildPlate3MF, mesh2geometry, computeCreaseNormals } from "./model/export";
 import type { BuildPlateGroup } from "./model/export";
 import { generateOrderPDF, renderThumbnail } from "./order-pdf";
 import type { OrderLineInfo } from "./order-pdf";
@@ -707,11 +707,14 @@ function promptOrderName(): Promise<string | null> {
       resolve(result);
     };
 
-    confirmBtn.addEventListener("click", () => cleanup(input.value.trim()));
+    confirmBtn.addEventListener("click", () => {
+      input.blur(); // Force IME composition commit before reading value
+      cleanup(input.value.trim());
+    });
     cancelBtn.addEventListener("click", () => cleanup(null));
     overlay.addEventListener("click", (e) => { if (e.target === overlay) cleanup(null); });
     input.addEventListener("keydown", (e) => {
-      if (e.key === "Enter") cleanup(input.value.trim());
+      if (e.key === "Enter" && !e.isComposing) cleanup(input.value.trim());
       if (e.key === "Escape") cleanup(null);
     });
   });
@@ -901,8 +904,13 @@ const downloadOrderAs3MF = async () => {
         );
         groups.push({ bodies, quantity: line.quantity, name: line.filename });
 
-        // Thumbnail from first body (plate)
-        const thumb = renderThumbnail(bodies[0].manifold, line.key);
+        // Thumbnail: use assembled preview (upright, matching app view)
+        const { preview: thumbPreview, textFill: thumbTextFill } = await tagPreview(
+          line.snapshot.width,
+          line.snapshot.tagText,
+          line.snapshot.tagEmoji,
+        );
+        const thumb = renderThumbnail(thumbPreview, line.key, 400, true, thumbTextFill ?? undefined);
         pdfLines.push({
           index: i,
           label: labelForSnapshot(line.snapshot),
@@ -948,15 +956,9 @@ const downloadOrderAs3MF = async () => {
     tempLink.click();
 
     // Generate and download PDF order summary
-    const bboxes = groups.map((g) => computeGroupBBox(g.bodies));
-    const placements = layoutOnBuildPlate(groups, bboxes);
-    const pdfBlob = generateOrderPDF({
+    const pdfBlob = await generateOrderPDF({
       orderName: orderName || "",
       lines: pdfLines,
-      placements,
-      bboxes,
-      plateW: BUILD_PLATE_W,
-      plateD: BUILD_PLATE_D,
       date: now,
     });
 

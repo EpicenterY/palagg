@@ -2,105 +2,165 @@ import { jsPDF } from "jspdf";
 import * as THREE from "three";
 import type { Manifold } from "manifold-3d";
 import { mesh2geometry } from "./model/export";
-import type {
-  Placement,
-  GroupBBox,
-} from "./model/export";
-import { PRETENDARD_BASE64 } from "./fonts/pretendard-base64";
+import { WEDRAW_LOGO_BASE64, WEDRAW_LOGO_W, WEDRAW_LOGO_H } from "./fonts/wedraw-logo-base64";
 
-// ─── Font Registration ───
+// ─── Font (loaded at runtime for Korean support) ───
 
-let fontRegistered = false;
+let fontCacheRegular: string | null = null;
+let fontCacheBold: string | null = null;
 
-function registerPretendard(doc: jsPDF) {
-  if (!fontRegistered) {
-    doc.addFileToVFS("Pretendard-Regular.ttf", PRETENDARD_BASE64);
-    doc.addFont("Pretendard-Regular.ttf", "Pretendard", "normal");
-    doc.addFont("Pretendard-Regular.ttf", "Pretendard", "bold");
-    fontRegistered = true;
-  }
-  doc.setFont("Pretendard", "normal");
+function arrayBufferToBase64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+  return btoa(binary);
 }
 
-// ─── Colors (wedraw brand) ───
-const COLOR_PRIMARY = "#36583D";
-const COLOR_DARK = "#5A5A52";
-const COLOR_NEUTRAL = "#B9B8AF";
-const COLOR_LIGHT_BG = "#F4F4F2";
+async function loadFonts(): Promise<{ regular: string; bold: string }> {
+  if (fontCacheRegular && fontCacheBold) {
+    return { regular: fontCacheRegular, bold: fontCacheBold };
+  }
+  const [regBuf, boldBuf] = await Promise.all([
+    fetch("/fonts/Pretendard-Regular.ttf").then((r) => r.arrayBuffer()),
+    fetch("/fonts/Pretendard-Bold.ttf").then((r) => r.arrayBuffer()),
+  ]);
+  fontCacheRegular = arrayBufferToBase64(regBuf);
+  fontCacheBold = arrayBufferToBase64(boldBuf);
+  return { regular: fontCacheRegular, bold: fontCacheBold };
+}
 
-// ─── Offscreen Thumbnail Rendering ───
+function registerFont(doc: jsPDF, fonts: { regular: string; bold: string }) {
+  doc.addFileToVFS("Pretendard-Regular.ttf", fonts.regular);
+  doc.addFileToVFS("Pretendard-Bold.ttf", fonts.bold);
+  doc.addFont("Pretendard-Regular.ttf", "Pretendard", "normal", undefined, "Identity-H");
+  doc.addFont("Pretendard-Bold.ttf", "Pretendard", "bold", undefined, "Identity-H");
+}
 
-const thumbnailCache = new Map<string, string>();
+// ─── Colors (B&W + green accent only) ───
+
+const C = {
+  primary:   "#36583D",
+  black:     "#1C1C1A",
+  mid:       "#5A5A52",
+  gray:      "#B9B8AF",
+  lightGray: "#E0E0DD",
+  white:     "#FFFFFF",
+};
+
+function rgb(hex: string): [number, number, number] {
+  const h = hex.replace("#", "");
+  return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
+}
+
+// ─── White Logo (for dark backgrounds) ───
+
+let whiteLogoCache: string | null = null;
+
+async function getWhiteLogo(): Promise<string> {
+  if (whiteLogoCache) return whiteLogoCache;
+  const img = new Image();
+  img.src = WEDRAW_LOGO_BASE64;
+  await new Promise<void>((resolve) => {
+    if (img.complete) resolve();
+    else img.onload = () => resolve();
+  });
+  const canvas = document.createElement("canvas");
+  canvas.width = WEDRAW_LOGO_W;
+  canvas.height = WEDRAW_LOGO_H;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(img, 0, 0);
+  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const px = imageData.data;
+  for (let i = 0; i < px.length; i += 4) {
+    if (px[i + 3] > 0) { px[i] = px[i + 1] = px[i + 2] = 255; }
+  }
+  ctx.putImageData(imageData, 0, 0);
+  whiteLogoCache = canvas.toDataURL("image/png");
+  return whiteLogoCache;
+}
+
+// ─── Order Number ───
+
+function generateOrderNumber(date: Date): string {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+  const rand = String(Math.floor(Math.random() * 10000)).padStart(4, "0");
+  return `ORD-${y}${m}${d}-${rand}`;
+}
+
+// ─── Thumbnail Rendering ───
+
+const thumbCache = new Map<string, string>();
 
 /**
- * Render a Manifold model as an IKEA-style wireframe thumbnail (PNG data URL).
- * White body + dark edge lines, orthographic camera auto-fitted to bounding box.
+ * Render a 3D thumbnail. For tags, pass the assembled preview manifold
+ * (upright, matching the app view) and optionally textFill for dark text.
  */
 export function renderThumbnail(
   manifold: Manifold,
   cacheKey: string,
   size = 400,
+  tagView = false,
+  textFillManifold?: Manifold,
 ): string {
-  const cached = thumbnailCache.get(cacheKey);
+  const fullKey = cacheKey + (tagView ? ":tag" : "");
+  const cached = thumbCache.get(fullKey);
   if (cached) return cached;
 
   const canvas = document.createElement("canvas");
   canvas.width = size;
   canvas.height = size;
-
-  const renderer = new THREE.WebGLRenderer({
-    canvas,
-    preserveDrawingBuffer: true,
-    alpha: true,
-    antialias: true,
-  });
+  const renderer = new THREE.WebGLRenderer({ canvas, preserveDrawingBuffer: true, alpha: true, antialias: true });
   renderer.setSize(size, size);
   renderer.setClearColor(0x000000, 0);
 
   const scene = new THREE.Scene();
-
   const geometry = mesh2geometry(manifold);
   geometry.computeVertexNormals();
 
-  // White solid body
-  const bodyMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-  const bodyMesh = new THREE.Mesh(geometry, bodyMat);
-  scene.add(bodyMesh);
+  // Use a group so we can apply rotation for tag view
+  const group = new THREE.Group();
+  group.add(new THREE.Mesh(geometry, new THREE.MeshBasicMaterial({ color: 0xffffff })));
 
-  // Dark edge lines (crease angle 30deg)
   const edges = new THREE.EdgesGeometry(geometry, 30);
-  const lineMat = new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 });
-  const lineSegments = new THREE.LineSegments(edges, lineMat);
-  scene.add(lineSegments);
+  group.add(new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0x333333, linewidth: 1 })));
 
-  // Auto-fit orthographic camera to bounding box
-  geometry.computeBoundingBox();
-  const bb = geometry.boundingBox!;
+  // Tag text fill — render as dark mesh
+  let tfGeom: THREE.BufferGeometry | null = null;
+  if (textFillManifold) {
+    tfGeom = mesh2geometry(textFillManifold);
+    tfGeom.computeVertexNormals();
+    group.add(new THREE.Mesh(tfGeom, new THREE.MeshBasicMaterial({ color: 0x1C1C1A })));
+  }
+
+  // Slight Z rotation for assembled tag view (matches app's MESH_ROTATION_DELTA)
+  if (tagView) {
+    group.rotation.z = 0.1;
+  }
+
+  scene.add(group);
+
+  // Compute bounds from the (possibly rotated) group
+  const bb = new THREE.Box3().setFromObject(group);
   const center = new THREE.Vector3();
   bb.getCenter(center);
-  const bbSize = new THREE.Vector3();
-  bb.getSize(bbSize);
+  const sz = new THREE.Vector3();
+  bb.getSize(sz);
+  const maxDim = Math.max(sz.x, sz.y, sz.z);
+  const half = maxDim / 2 + maxDim * (tagView ? 0.2 : 0.12);
 
-  const maxDim = Math.max(bbSize.x, bbSize.y, bbSize.z);
-  const padding = maxDim * 0.15;
-  const halfExtent = maxDim / 2 + padding;
+  const camera = new THREE.OrthographicCamera(-half, half, half, -half, 0.1, maxDim * 10);
+  const d = maxDim * 2;
 
-  const camera = new THREE.OrthographicCamera(
-    -halfExtent,
-    halfExtent,
-    halfExtent,
-    -halfExtent,
-    0.1,
-    maxDim * 10,
-  );
-
-  // Isometric-ish view angle
-  const dist = maxDim * 2;
-  camera.position.set(
-    center.x + dist * 0.7,
-    center.y - dist * 0.5,
-    center.z + dist * 0.6,
-  );
+  if (tagView) {
+    // Assembled tag: show front face (+Y) with text/logo visible
+    // Camera in front-right-above, looking at center
+    camera.position.set(center.x + d * 0.6, center.y + d * 0.6, center.z + d * 0.45);
+  } else {
+    // Standard isometric
+    camera.position.set(center.x + d * 0.7, center.y - d * 0.5, center.z + d * 0.6);
+  }
   camera.up.set(0, 0, 1);
   camera.lookAt(center);
   camera.updateProjectionMatrix();
@@ -108,115 +168,16 @@ export function renderThumbnail(
   renderer.render(scene, camera);
   const dataUrl = canvas.toDataURL("image/png");
 
-  // Cleanup
   geometry.dispose();
-  bodyMat.dispose();
   edges.dispose();
-  lineMat.dispose();
+  if (tfGeom) tfGeom.dispose();
   renderer.dispose();
 
-  thumbnailCache.set(cacheKey, dataUrl);
+  thumbCache.set(fullKey, dataUrl);
   return dataUrl;
 }
 
-// ─── Build Plate Layout Diagram ───
-
-/**
- * Render a 2D top-down layout diagram of placements on build plates.
- */
-export function renderBuildPlateLayout(
-  placements: Placement[],
-  bboxes: GroupBBox[],
-  plateW: number,
-  plateD: number,
-): string {
-  // Group placements by plate
-  const plateMap = new Map<number, Placement[]>();
-  for (const p of placements) {
-    if (!plateMap.has(p.plate)) plateMap.set(p.plate, []);
-    plateMap.get(p.plate)!.push(p);
-  }
-
-  const plateCount = plateMap.size;
-  const cellW = 200;
-  const cellH = 200;
-  const margin = 20;
-  const cols = Math.min(plateCount, 3);
-  const rows = Math.ceil(plateCount / cols);
-
-  const canvasW = cols * (cellW + margin) + margin;
-  const canvasH = rows * (cellH + margin + 24) + margin;
-
-  const canvas = document.createElement("canvas");
-  canvas.width = canvasW;
-  canvas.height = canvasH;
-  const ctx = canvas.getContext("2d")!;
-
-  ctx.fillStyle = "#ffffff";
-  ctx.fillRect(0, 0, canvasW, canvasH);
-
-  const sortedPlates = [...plateMap.entries()].sort((a, b) => a[0] - b[0]);
-
-  for (let pi = 0; pi < sortedPlates.length; pi++) {
-    const [plateNum, platePlacements] = sortedPlates[pi];
-    const col = pi % cols;
-    const row = Math.floor(pi / cols);
-
-    const ox = margin + col * (cellW + margin);
-    const oy = margin + row * (cellH + margin + 24);
-
-    // Plate label
-    ctx.fillStyle = COLOR_DARK;
-    ctx.font = "bold 12px Helvetica, Arial, sans-serif";
-    ctx.fillText(`Plate ${plateNum + 1}`, ox, oy + 12);
-
-    const plateOy = oy + 20;
-
-    // Plate background
-    ctx.fillStyle = COLOR_LIGHT_BG;
-    ctx.fillRect(ox, plateOy, cellW, cellH);
-
-    // Dashed border
-    ctx.strokeStyle = COLOR_NEUTRAL;
-    ctx.lineWidth = 1;
-    ctx.setLineDash([4, 4]);
-    ctx.strokeRect(ox, plateOy, cellW, cellH);
-    ctx.setLineDash([]);
-
-    // Scale factor
-    const scaleX = cellW / plateW;
-    const scaleY = cellH / plateD;
-    const scale = Math.min(scaleX, scaleY);
-
-    // Draw each placement
-    for (const p of platePlacements) {
-      const bb = bboxes[p.groupIndex];
-      const rx = ox + p.tx * scale;
-      const ry = plateOy + p.ty * scale;
-      const rw = bb.width * scale;
-      const rd = bb.depth * scale;
-
-      // Filled rect
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(rx, ry, rw, rd);
-      ctx.strokeStyle = COLOR_PRIMARY;
-      ctx.lineWidth = 1.5;
-      ctx.setLineDash([]);
-      ctx.strokeRect(rx, ry, rw, rd);
-
-      // Number label
-      ctx.fillStyle = COLOR_PRIMARY;
-      ctx.font = "bold 11px Helvetica, Arial, sans-serif";
-      const numLabel = `${p.groupIndex + 1}`;
-      const tw = ctx.measureText(numLabel).width;
-      ctx.fillText(numLabel, rx + rw / 2 - tw / 2, ry + rd / 2 + 4);
-    }
-  }
-
-  return canvas.toDataURL("image/png");
-}
-
-// ─── PDF Generation ───
+// ─── Types ───
 
 export interface OrderLineInfo {
   index: number;
@@ -224,16 +185,10 @@ export interface OrderLineInfo {
   shape: "box" | "organizer" | "tag";
   snapshot: {
     shape: string;
-    width: number;
-    depth: number;
-    height: number;
-    radius: number;
-    wall: number;
-    bottom: number;
-    cols: number;
-    rows: number;
-    tagText: string;
-    tagEmoji: string | null;
+    width: number; depth: number; height: number;
+    radius: number; wall: number; bottom: number;
+    cols: number; rows: number;
+    tagText: string; tagEmoji: string | null;
   };
   quantity: number;
   thumbnailDataUrl: string;
@@ -242,263 +197,463 @@ export interface OrderLineInfo {
 export interface OrderPDFOptions {
   orderName: string;
   lines: OrderLineInfo[];
-  placements: Placement[];
-  bboxes: GroupBBox[];
-  plateW: number;
-  plateD: number;
   date: Date;
 }
 
-function formatDate(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${y}.${m}.${day}`;
+// ─── Formatters ───
+
+function fmtDate(d: Date) {
+  return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`;
+}
+function tName(s: string) { return s === "organizer" ? "Grid" : s === "tag" ? "Tag" : "Box"; }
+
+function dimStr(l: OrderLineInfo) {
+  const s = l.snapshot;
+  if (s.shape === "tag") return "W" + s.width + 'mm  "' + (s.tagEmoji || s.tagText || "blank") + '"';
+  return s.width + " x " + s.depth + " x " + s.height + " mm";
+}
+function specStr(l: OrderLineInfo) {
+  const s = l.snapshot;
+  if (s.shape === "tag") return "";
+  if (s.shape === "organizer") return (s.cols + 1) + " x " + (s.rows + 1) + " cells";
+  return "R" + s.radius + "  W" + s.wall + "  B" + s.bottom;
 }
 
-function shapeLabel(shape: string): string {
-  switch (shape) {
-    case "box":
-      return "BOX";
-    case "organizer":
-      return "GRID";
-    case "tag":
-      return "TAG";
-    default:
-      return shape.toUpperCase();
-  }
+// ═══════════════════════════════════════
+// LAYOUT CONSTANTS
+// ═══════════════════════════════════════
+
+const PW = 210;
+const PH = 297;
+const HALF = PW / 2;       // 105mm center line
+const M = 7;                // margin inside each half
+const CW = HALF - M * 2;   // ~91mm content width per half
+
+const HEADER_H = 18;       // green header bar
+const FOOTER_H = 10;       // green footer bar
+const BODY_TOP_FIRST = HEADER_H + 4;
+const BODY_TOP_CONT = 8;
+const BODY_BOT = PH - FOOTER_H - 10;
+
+const CARD_H = 32;
+const CARD_GAP = 2;
+const THUMB_SIZE = 19;
+
+// ═══════════════════════════════════════
+// DRAWING HELPERS
+// ═══════════════════════════════════════
+
+function truncateText(doc: jsPDF, text: string, maxW: number): string {
+  if (doc.getTextWidth(text) <= maxW) return text;
+  while (text.length > 1 && doc.getTextWidth(text + "…") > maxW) text = text.slice(0, -1);
+  return text + "…";
 }
 
-function itemSpecLine(line: OrderLineInfo): string {
-  const s = line.snapshot;
-  if (s.shape === "tag") {
-    const content = s.tagEmoji
-      ? s.tagEmoji
-      : `"${s.tagText || "blank"}"`;
-    return `W ${s.width} mm  |  ${content}`;
-  }
-  if (s.shape === "organizer") {
-    return `${s.width} x ${s.depth} x ${s.height} mm  |  ${s.cols + 1}x${s.rows + 1} cells`;
-  }
-  return `${s.width} x ${s.depth} x ${s.height} mm  |  R${s.radius} W${s.wall} B${s.bottom}`;
-}
+function drawHeader(doc: jsPDF, lx: number, orderNo: string, whiteLogo: string) {
+  // Green bar
+  doc.setFillColor(...rgb(C.primary));
+  doc.rect(lx, 0, HALF, HEADER_H, "F");
 
-/**
- * Generate an IKEA-style A4 order summary PDF.
- */
-export function generateOrderPDF(options: OrderPDFOptions): Blob {
-  const { orderName, lines, placements, bboxes, plateW, plateD, date } =
-    options;
-
-  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
-  const pageW = 210;
-  const marginL = 15;
-  const marginR = 15;
-  const contentW = pageW - marginL - marginR;
-
-  let y = 20;
-
-  // ─── Header ───
-  doc.setFontSize(20);
-  doc.setTextColor(COLOR_PRIMARY);
-  registerPretendard(doc);
-
+  // Brand name — vertically centered with order number as a pair
   doc.setFont("Pretendard", "bold");
-  doc.text("PALAGG", marginL, y);
-
   doc.setFontSize(14);
-  doc.setTextColor(COLOR_DARK);
+  doc.setTextColor(...rgb(C.white));
+  doc.text("PÅLÄGG", lx + M, 10);
+
+  // Order number — below brand
   doc.setFont("Pretendard", "normal");
-  doc.text("주문 내역서", marginL + 42, y);
+  doc.setFontSize(6);
+  doc.setTextColor(255, 255, 255, 180);
+  doc.text(orderNo, lx + M, 14);
 
-  y += 10;
-  doc.setFontSize(10);
-  doc.setTextColor(COLOR_DARK);
-  doc.text(`주문자: ${orderName || "-"}`, marginL, y);
-  doc.text(`날짜: ${formatDate(date)}`, pageW - marginR - 40, y);
-
-  y += 6;
-  doc.setDrawColor(COLOR_NEUTRAL);
-  doc.setLineWidth(0.3);
-  doc.line(marginL, y, pageW - marginR, y);
-  y += 8;
-
-  // ─── Order Items ───
-  const thumbSize = 32; // mm
-
-  for (const line of lines) {
-    // Check if we need a new page
-    if (y + thumbSize + 10 > 270) {
-      doc.addPage();
-      y = 20;
-    }
-
-    // Shape type badge
-    doc.setFontSize(8);
-    doc.setFont("Pretendard", "bold");
-    doc.setTextColor(COLOR_PRIMARY);
-    doc.text(`■ ${shapeLabel(line.shape)}`, marginL, y);
-    y += 5;
-
-    // Thumbnail
-    const imgX = marginL;
-    const imgY = y;
-    try {
-      doc.addImage(
-        line.thumbnailDataUrl,
-        "PNG",
-        imgX,
-        imgY,
-        thumbSize,
-        thumbSize,
-      );
-    } catch {
-      // If thumbnail fails, draw placeholder
-      doc.setDrawColor(COLOR_NEUTRAL);
-      doc.setFillColor(COLOR_LIGHT_BG);
-      doc.rect(imgX, imgY, thumbSize, thumbSize, "FD");
-    }
-
-    // Text info (right of thumbnail)
-    const textX = marginL + thumbSize + 6;
-
-    doc.setFontSize(11);
-    doc.setFont("Pretendard", "bold");
-    doc.setTextColor(COLOR_DARK);
-    const typeName =
-      line.shape === "organizer" ? "Grid" : line.shape === "tag" ? "Tag" : "Box";
-    doc.text(`#${line.index + 1}  PALAGG ${typeName}`, textX, imgY + 6);
-
-    doc.setFontSize(9);
-    doc.setFont("Pretendard", "normal");
-    doc.setTextColor(COLOR_DARK);
-    doc.text(itemSpecLine(line), textX, imgY + 13);
-
-    doc.setFontSize(10);
-    doc.setFont("Pretendard", "normal");
-    doc.text(`수량: x${line.quantity}`, textX, imgY + 20);
-
-    y = imgY + thumbSize + 6;
-  }
-
-  // ─── Build Plate Layout ───
-  y += 4;
-  if (y + 60 > 270) {
-    doc.addPage();
-    y = 20;
-  }
-
-  doc.setDrawColor(COLOR_NEUTRAL);
-  doc.setLineWidth(0.3);
-  doc.line(marginL, y, pageW - marginR, y);
-  y += 8;
-
-  doc.setFontSize(12);
-  doc.setFont("Pretendard", "bold");
-  doc.setTextColor(COLOR_PRIMARY);
-  doc.text("빌드 플레이트 배치도", marginL, y);
-  y += 6;
-
-  // Render build plate diagram
-  const layoutDataUrl = renderBuildPlateLayout(
-    placements,
-    bboxes,
-    plateW,
-    plateD,
-  );
-  const layoutImgW = Math.min(contentW, 120);
-  const layoutImgH = layoutImgW * 0.6;
-
-  if (y + layoutImgH + 10 > 270) {
-    doc.addPage();
-    y = 20;
-  }
-
+  // wedraw logo — right side, vertically centered in header
+  const logoH = 7;
+  const logoW = logoH * (WEDRAW_LOGO_W / WEDRAW_LOGO_H);
+  const logoY = (HEADER_H - logoH) / 2;
   try {
-    doc.addImage(layoutDataUrl, "PNG", marginL, y, layoutImgW, layoutImgH);
-  } catch {
-    // fallback: skip image
-  }
-  y += layoutImgH + 8;
+    doc.addImage(whiteLogo, "PNG", lx + HALF - M - logoW, logoY, logoW, logoH);
+  } catch { /* skip */ }
+}
 
-  // ─── Checklist ───
-  if (y + lines.length * 8 + 40 > 270) {
-    doc.addPage();
-    y = 20;
-  }
+function drawFooter(doc: jsPDF, lx: number, pageNum: number, totalPages: number) {
+  const fy = PH - FOOTER_H;
 
-  doc.setDrawColor(COLOR_NEUTRAL);
-  doc.setLineWidth(0.3);
-  doc.line(marginL, y, pageW - marginR, y);
-  y += 8;
+  doc.setFillColor(...rgb(C.primary));
+  doc.rect(lx, fy, HALF, FOOTER_H, "F");
 
-  doc.setFontSize(12);
+  // Force text color reset after fill
+  doc.setTextColor(0, 0, 0);
+
   doc.setFont("Pretendard", "bold");
-  doc.setTextColor(COLOR_PRIMARY);
-  doc.text("검수 체크리스트", marginL, y);
-  y += 8;
+  doc.setFontSize(5.5);
+  doc.setTextColor(...rgb(C.white));
+  doc.text("PÅLÄGG", lx + M, fy + 6.5);
 
-  const totalQty = lines.reduce((sum, l) => sum + l.quantity, 0);
+  doc.setFont("Pretendard", "normal");
+  doc.setFontSize(6);
+  doc.setTextColor(...rgb(C.white));
+  doc.text("wedraw.kr", lx + HALF / 2, fy + 6.5, { align: "center" });
 
-  for (const line of lines) {
-    if (y + 8 > 280) {
-      doc.addPage();
-      y = 20;
-    }
+  doc.setFontSize(5.5);
+  doc.setTextColor(...rgb(C.white));
+  doc.text(pageNum + " / " + totalPages, lx + HALF - M, fy + 6.5, { align: "right" });
+}
 
-    // Checkbox square
-    doc.setDrawColor(COLOR_DARK);
-    doc.setLineWidth(0.4);
-    doc.rect(marginL, y - 3.5, 4, 4);
+function drawCutLine(doc: jsPDF) {
+  doc.setDrawColor(...rgb(C.gray));
+  doc.setLineWidth(0.15);
+  doc.setLineDashPattern([1.5, 1.5], 0);
+  doc.line(HALF, 0, HALF, PH);
+  doc.setLineDashPattern([], 0);
+}
 
-    const typeName =
-      line.shape === "organizer" ? "Grid" : line.shape === "tag" ? "Tag" : "Box";
+function drawOrderInfo(
+  doc: jsPDF, lx: number, y: number,
+  titleLine1: string, titleLine2: string,
+  orderName: string, date: Date,
+  totalItems: number, totalQty: number,
+): number {
+  const cx = lx + M;
+  const right = lx + HALF - M;
 
-    let dims: string;
-    if (line.shape === "tag") {
-      const content = line.snapshot.tagEmoji
-        ? line.snapshot.tagEmoji
-        : `"${line.snapshot.tagText || "blank"}"`;
-      dims = `${line.snapshot.width} ${content}`;
-    } else {
-      dims = `${line.snapshot.width}x${line.snapshot.depth}x${line.snapshot.height}`;
-    }
+  // Title line 1 (bold)
+  doc.setFont("Pretendard", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(...rgb(C.black));
+  doc.text(titleLine1, cx, y);
 
-    doc.setFontSize(9);
-    doc.setFont("Pretendard", "normal");
-    doc.setTextColor(COLOR_DARK);
-    doc.text(
-      `#${line.index + 1}  PALAGG ${typeName} ${dims}`,
-      marginL + 7,
-      y,
-    );
+  // Title line 2 (gray, smaller)
+  y += 4;
+  doc.setFont("Pretendard", "normal");
+  doc.setFontSize(6.5);
+  doc.setTextColor(...rgb(C.gray));
+  doc.text(titleLine2, cx, y);
 
-    doc.setFont("Pretendard", "bold");
-    doc.text(`x${line.quantity}`, pageW - marginR - 15, y);
+  y += 5;
 
-    y += 7;
-  }
+  // Order name — prominent
+  doc.setFont("Pretendard", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(...rgb(C.black));
+  doc.text(orderName || "-", cx, y);
+  // Date — right-aligned, secondary
+  doc.setFont("Pretendard", "normal");
+  doc.setFontSize(6.5);
+  doc.setTextColor(...rgb(C.mid));
+  doc.text(fmtDate(date), right, y, { align: "right" });
+
+  y += 5.5;
+
+  // Total quantity — emphasized
+  doc.setFont("Pretendard", "bold");
+  doc.setFontSize(12);
+  doc.setTextColor(...rgb(C.black));
+  doc.text("Total " + totalQty + " pcs", cx, y);
+  doc.setFont("Pretendard", "normal");
+  doc.setFontSize(6.5);
+  doc.setTextColor(...rgb(C.mid));
+  doc.text(totalItems + " items", right, y - 0.5, { align: "right" });
 
   y += 4;
-  doc.setFontSize(10);
+  doc.setDrawColor(...rgb(C.lightGray));
+  doc.setLineWidth(0.3);
+  doc.line(cx, y, right, y);
+
+  return y + 3;
+}
+
+function drawItemCard(doc: jsPDF, lx: number, y: number, line: OrderLineInfo, withCheckboxes: boolean) {
+  const cx = lx + M;
+  const right = cx + CW;
+
+  // Card border
+  doc.setDrawColor(...rgb(C.lightGray));
+  doc.setLineWidth(0.3);
+  doc.setFillColor(...rgb(C.white));
+  doc.roundedRect(cx, y, CW, CARD_H, 1.5, 1.5, "FD");
+
+  // Force text color reset after fill
+  doc.setTextColor(0, 0, 0);
+
+  // Thumbnail
+  const tp = 2;
+  const thumbX = cx + tp;
+  const thumbY = y + (CARD_H - THUMB_SIZE) / 2;
+  try {
+    doc.addImage(line.thumbnailDataUrl, "PNG", thumbX, thumbY, THUMB_SIZE, THUMB_SIZE);
+  } catch { /* skip if thumbnail unavailable */ }
+
+  const tx = thumbX + THUMB_SIZE + 3;
+
+  // Type badge
+  const badge = tName(line.shape).toUpperCase();
+  doc.setFontSize(4.5);
   doc.setFont("Pretendard", "bold");
-  doc.setTextColor(COLOR_DARK);
-  doc.text(`총 ${totalQty}개`, marginL, y);
+  const bw = doc.getTextWidth(badge) + 2.5;
+  doc.setDrawColor(...rgb(C.gray));
+  doc.setLineWidth(0.2);
+  doc.setFillColor(...rgb(C.white));
+  doc.roundedRect(tx, y + 2.5, bw, 3.5, 0.8, 0.8, "FD");
+  doc.setTextColor(...rgb(C.mid));
+  doc.text(badge, tx + 1.2, y + 5);
 
-  y += 10;
-  doc.setFontSize(9);
+  // Name — faux bold via double-draw
+  doc.setFontSize(8);
+  doc.setFont("Pretendard", "bold");
+  doc.setTextColor(...rgb(C.black));
+  const nameText = "PÅLÄGG " + tName(line.shape);
+  doc.text(nameText, tx, y + 12);
+
+  // Dims (truncated to avoid overlap with quantity)
+  doc.setFontSize(6.5);
   doc.setFont("Pretendard", "normal");
-  doc.setTextColor(COLOR_NEUTRAL);
-  doc.text("검수자: _______________    날짜: _______________", marginL, y);
+  doc.setTextColor(...rgb(C.mid));
+  doc.text(truncateText(doc, dimStr(line), right - tx - 16), tx, y + 17);
 
-  // ─── Footer ───
-  const pageCount = doc.getNumberOfPages();
-  for (let p = 1; p <= pageCount; p++) {
-    doc.setPage(p);
-    doc.setFontSize(8);
+  // Spec
+  const sp = specStr(line);
+  if (sp) {
+    doc.setFontSize(5.5);
     doc.setFont("Pretendard", "normal");
-    doc.setTextColor(COLOR_NEUTRAL);
-    doc.text("wedraw.kr", pageW / 2, 290, { align: "center" });
+    doc.setTextColor(...rgb(C.gray));
+    doc.text(sp, tx, y + 21);
+  }
+
+  // Quantity
+  doc.setFontSize(13);
+  doc.setFont("Pretendard", "bold");
+  doc.setTextColor(...rgb(C.black));
+
+  if (withCheckboxes) {
+    // Quantity at top-right
+    doc.text("x" + line.quantity, right - 3, y + 11, { align: "right" });
+
+    // Per-item checkboxes at bottom-right
+    const cbX = right - 26;
+    const cbY = y + CARD_H - 7.5;
+    doc.setFontSize(5.5);
+    doc.setFont("Pretendard", "normal");
+    doc.setTextColor(...rgb(C.mid));
+    doc.setDrawColor(...rgb(C.gray));
+    doc.setLineWidth(0.25);
+    doc.rect(cbX, cbY, 2.5, 2.5);
+    doc.text("QC", cbX + 3.5, cbY + 2);
+    doc.rect(cbX + 13, cbY, 2.5, 2.5);
+    doc.text("Ship", cbX + 16.5, cbY + 2);
+  } else {
+    // Quantity centered vertically
+    doc.text("x" + line.quantity, right - 3, y + CARD_H / 2 + 3, { align: "right" });
+  }
+}
+
+function drawTotal(doc: jsPDF, lx: number, y: number, totalQty: number): number {
+  const cx = lx + M;
+  const right = cx + CW;
+
+  doc.setDrawColor(...rgb(C.lightGray));
+  doc.setLineWidth(0.3);
+  doc.line(cx, y, right, y);
+  y += 5;
+
+  doc.setFont("Pretendard", "bold");
+  doc.setFontSize(9);
+  doc.setTextColor(...rgb(C.black));
+  const totalText = "Total: " + totalQty + " pcs";
+  doc.text(totalText, right, y, { align: "right" });
+
+  return y + 3;
+}
+
+/** Customer side: QC sign-off at the end */
+function drawCustomerSignature(doc: jsPDF, lx: number, y: number): number {
+  const cx = lx + M;
+  const right = cx + CW;
+  const labelW = 18;
+
+  y += 4;
+  doc.setDrawColor(...rgb(C.lightGray));
+  doc.setLineWidth(0.3);
+  doc.line(cx, y, right, y);
+  y += 6;
+
+  doc.setFont("Pretendard", "bold");
+  doc.setFontSize(7);
+  doc.setTextColor(...rgb(C.black));
+  doc.text("QC Sign-off", cx, y);
+  y += 7;
+
+  doc.setFont("Pretendard", "normal");
+  doc.setFontSize(6.5);
+  doc.setTextColor(...rgb(C.mid));
+
+  // Inspector
+  doc.text("Inspector", cx, y);
+  doc.setDrawColor(...rgb(C.lightGray));
+  doc.setLineWidth(0.2);
+  doc.line(cx + labelW, y, right, y);
+  y += 7;
+
+  // Date
+  doc.text("Date", cx, y);
+  doc.line(cx + labelW, y, right, y);
+  y += 7;
+
+  // Signature box
+  doc.text("Signature", cx, y);
+  doc.setDrawColor(...rgb(C.lightGray));
+  doc.setLineWidth(0.3);
+  doc.rect(cx + labelW, y - 5, right - cx - labelW, 12);
+
+  return y + 10;
+}
+
+/** Internal side: notes area at the end */
+function drawInternalNote(doc: jsPDF, lx: number, y: number): number {
+  const cx = lx + M;
+  const right = cx + CW;
+
+  y += 4;
+  doc.setDrawColor(...rgb(C.lightGray));
+  doc.setLineWidth(0.3);
+  doc.line(cx, y, right, y);
+  y += 6;
+
+  // Notes box
+  doc.setFont("Pretendard", "normal");
+  doc.setFontSize(6.5);
+  doc.setTextColor(...rgb(C.mid));
+  doc.text("Notes", cx, y);
+  y += 2;
+  doc.setDrawColor(...rgb(C.lightGray));
+  doc.rect(cx, y, CW, 14);
+  y += 17;
+
+  // Staff + Date
+  doc.text("Staff", cx, y);
+  doc.setDrawColor(...rgb(C.lightGray));
+  doc.setLineWidth(0.2);
+  doc.line(cx + 12, y, right, y);
+  y += 6;
+  doc.text("Date", cx, y);
+  doc.line(cx + 12, y, right, y);
+
+  return y + 3;
+}
+
+// ═══════════════════════════════════════
+// PDF GENERATION
+// ═══════════════════════════════════════
+
+export async function generateOrderPDF(opts: OrderPDFOptions): Promise<Blob> {
+  const { orderName, lines, date } = opts;
+  const [fonts, whiteLogo] = await Promise.all([loadFonts(), getWhiteLogo()]);
+  const doc = new jsPDF({ orientation: "portrait", unit: "mm", format: "a4" });
+  registerFont(doc, fonts);
+
+
+  const totalQty = lines.reduce((s, l) => s + l.quantity, 0);
+  const orderNo = generateOrderNumber(date);
+
+  // ── Pagination ──
+  const SIGNATURE_H = 55;
+  const pages: { startIdx: number; endIdx: number; isLast: boolean }[] = [];
+  let idx = 0;
+  let pageIdx = 0;
+
+  while (idx < lines.length) {
+    pageIdx++;
+    const bodyTop = pageIdx === 1 ? BODY_TOP_FIRST + 21 : BODY_TOP_CONT + 4;
+    const availH = BODY_BOT - bodyTop;
+    const maxCards = Math.floor(availH / (CARD_H + CARD_GAP));
+    const remaining = lines.length - idx;
+
+    if (remaining <= maxCards) {
+      // Last batch — check if signature fits
+      const cardsH = remaining * (CARD_H + CARD_GAP);
+      if (cardsH + SIGNATURE_H > availH && remaining > 1) {
+        const reducedCount = Math.max(1, Math.floor((availH - SIGNATURE_H) / (CARD_H + CARD_GAP)));
+        pages.push({ startIdx: idx, endIdx: idx + reducedCount, isLast: false });
+        idx += reducedCount;
+        continue;
+      }
+      pages.push({ startIdx: idx, endIdx: idx + remaining, isLast: true });
+      idx += remaining;
+    } else {
+      const count = Math.min(maxCards, remaining);
+      pages.push({ startIdx: idx, endIdx: idx + count, isLast: false });
+      idx += count;
+    }
+  }
+
+  if (pages.length === 0) {
+    pages.push({ startIdx: 0, endIdx: 0, isLast: true });
+  }
+
+  const totalPages = pages.length;
+
+  // ── Render pages ──
+  // Draw each column fully before the other to avoid jsPDF font-encoding
+  // state corruption when CJK characters are interleaved with Latin text.
+  for (let pi = 0; pi < pages.length; pi++) {
+    if (pi > 0) doc.addPage();
+    const page = pages[pi];
+
+    // ── Left column (Customer Copy) ──
+    drawHeader(doc, 0, orderNo, whiteLogo);
+
+    let yL: number;
+    if (pi === 0) {
+      yL = drawOrderInfo(doc, 0, BODY_TOP_FIRST, "Order Confirmation", "Customer Copy", orderName, date, lines.length, totalQty);
+    } else {
+      yL = BODY_TOP_CONT + 4;
+      doc.setFont("Pretendard", "normal");
+      doc.setFontSize(6);
+      doc.setTextColor(...rgb(C.gray));
+      doc.text("(cont.)", M, yL - 1);
+    }
+
+    for (let i = page.startIdx; i < page.endIdx; i++) {
+      drawItemCard(doc, 0, yL, lines[i], false);
+      yL += CARD_H + CARD_GAP;
+    }
+
+    if (page.isLast) {
+      yL += 2;
+      yL = drawTotal(doc, 0, yL, totalQty);
+      drawCustomerSignature(doc, 0, yL);
+    }
+
+    drawFooter(doc, 0, pi + 1, totalPages);
+
+    // ── Right column (Internal Copy) ──
+    drawHeader(doc, HALF, orderNo, whiteLogo);
+
+    let yR: number;
+    if (pi === 0) {
+      yR = drawOrderInfo(doc, HALF, BODY_TOP_FIRST, "Shipment Record", "Internal Copy", orderName, date, lines.length, totalQty);
+    } else {
+      yR = BODY_TOP_CONT + 4;
+      doc.setFont("Pretendard", "normal");
+      doc.setFontSize(6);
+      doc.setTextColor(...rgb(C.gray));
+      doc.text("(cont.)", HALF + M, yR - 1);
+    }
+
+    for (let i = page.startIdx; i < page.endIdx; i++) {
+      drawItemCard(doc, HALF, yR, lines[i], true);
+      yR += CARD_H + CARD_GAP;
+    }
+
+    if (page.isLast) {
+      yR += 2;
+      yR = drawTotal(doc, HALF, yR, totalQty);
+      drawInternalNote(doc, HALF, yR);
+    }
+
+    drawFooter(doc, HALF, pi + 1, totalPages);
+
+    // Cut line (drawn last so it overlays both columns)
+    drawCutLine(doc);
   }
 
   return doc.output("blob") as unknown as Blob;
