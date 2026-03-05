@@ -260,10 +260,10 @@ function drawHeader(doc: jsPDF, lx: number, orderNo: string, whiteLogo: string) 
   doc.setTextColor(...rgb(C.white));
   doc.text("PÅLÄGG", lx + M, 10);
 
-  // Order number — below brand
+  // Order number — below brand, white
   doc.setFont("Pretendard", "normal");
   doc.setFontSize(6);
-  doc.setTextColor(255, 255, 255, 180);
+  doc.setTextColor(...rgb(C.white));
   doc.text(orderNo, lx + M, 14);
 
   // wedraw logo — right side, vertically centered in header
@@ -331,9 +331,9 @@ function drawOrderInfo(
 
   y += 5;
 
-  // Order name — prominent
+  // Order name — large and prominent
   doc.setFont("Pretendard", "bold");
-  doc.setFontSize(9);
+  doc.setFontSize(11);
   doc.setTextColor(...rgb(C.black));
   doc.text(orderName || "-", cx, y);
   // Date — right-aligned, secondary
@@ -555,7 +555,7 @@ export async function generateOrderPDF(opts: OrderPDFOptions): Promise<Blob> {
   const orderNo = generateOrderNumber(date);
 
   // ── Pagination ──
-  const SIGNATURE_H = 55;
+  const SIGNATURE_H = 45;
   const pages: { startIdx: number; endIdx: number; isLast: boolean }[] = [];
   let idx = 0;
   let pageIdx = 0;
@@ -619,7 +619,6 @@ export async function generateOrderPDF(opts: OrderPDFOptions): Promise<Blob> {
 
     if (page.isLast) {
       yL += 2;
-      yL = drawTotal(doc, 0, yL, totalQty);
       drawCustomerSignature(doc, 0, yL);
     }
 
@@ -646,7 +645,6 @@ export async function generateOrderPDF(opts: OrderPDFOptions): Promise<Blob> {
 
     if (page.isLast) {
       yR += 2;
-      yR = drawTotal(doc, HALF, yR, totalQty);
       drawInternalNote(doc, HALF, yR);
     }
 
