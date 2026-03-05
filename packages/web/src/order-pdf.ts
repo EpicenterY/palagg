@@ -446,23 +446,7 @@ function drawItemCard(doc: jsPDF, lx: number, y: number, line: OrderLineInfo, wi
   }
 }
 
-function drawTotal(doc: jsPDF, lx: number, y: number, totalQty: number): number {
-  const cx = lx + M;
-  const right = cx + CW;
 
-  doc.setDrawColor(...rgb(C.lightGray));
-  doc.setLineWidth(0.3);
-  doc.line(cx, y, right, y);
-  y += 5;
-
-  doc.setFont("Pretendard", "bold");
-  doc.setFontSize(9);
-  doc.setTextColor(...rgb(C.black));
-  const totalText = "Total: " + totalQty + " pcs";
-  doc.text(totalText, right, y, { align: "right" });
-
-  return y + 3;
-}
 
 /** Customer side: QC sign-off at the end */
 function drawCustomerSignature(doc: jsPDF, lx: number, y: number): number {
