@@ -232,7 +232,7 @@ const CW = HALF - M * 2;   // ~91mm content width per half
 const HEADER_H = 18;       // green header bar
 const FOOTER_H = 10;       // green footer bar
 const BODY_TOP_FIRST = HEADER_H + 4;
-const BODY_TOP_CONT = 8;
+const BODY_TOP_CONT = HEADER_H + 4;
 const BODY_BOT = PH - FOOTER_H - 10;
 
 const CARD_H = 32;
