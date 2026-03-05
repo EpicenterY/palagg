@@ -20,6 +20,7 @@ import { rangeControl, stepper, toggleControl, textInput, emojiPicker, addEmojiB
 import { searchIcons, fetchIconData, iconifyToPreset } from "./iconify";
 import { loadCustomIcons, saveCustomIcon } from "./icon-store";
 import { remainingQuota, recordDownload, msUntilNextSlot, resetQuota, DOWNLOAD_LIMIT } from "./rate-limit";
+import confetti from "canvas-confetti";
 
 /// CONSTANTS
 
@@ -564,6 +565,14 @@ quotaDots.addEventListener("click", (e) => {
     if (pin === "0715") {
       resetQuota();
       refreshQuotaUI();
+      // 🎉 Fireworks celebration
+      const end = Date.now() + 1500;
+      const frame = () => {
+        confetti({ particleCount: 3, angle: 60, spread: 55, origin: { x: 0, y: 0.7 } });
+        confetti({ particleCount: 3, angle: 120, spread: 55, origin: { x: 1, y: 0.7 } });
+        if (Date.now() < end) requestAnimationFrame(frame);
+      };
+      frame();
     }
   } else {
     secretClickTimer = setTimeout(() => {

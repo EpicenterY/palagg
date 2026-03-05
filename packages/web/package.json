@@ -10,6 +10,7 @@
     "format": "prettier ./src ./index.html -w"
   },
   "devDependencies": {
+    "@types/canvas-confetti": "^1.9.0",
     "@types/three": "0.173",
     "typescript": "5.7",
     "vite": "^6.2.5"
@@ -17,6 +18,7 @@
   "dependencies": {
     "@jscadui/3mf-export": "0.5.0",
     "@palagg/shared": "*",
+    "canvas-confetti": "^1.9.4",
     "fflate": "0.8",
     "jspdf": "^4.2.0",
     "manifold-3d": "3.0",
