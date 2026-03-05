@@ -299,12 +299,34 @@ function drawFooter(doc: jsPDF, lx: number, pageNum: number, totalPages: number)
   doc.text(pageNum + " / " + totalPages, lx + HALF - M, fy + 6.5, { align: "right" });
 }
 
+function drawScissors(doc: jsPDF, cx: number, cy: number) {
+  const s = 0.65; // scale factor
+
+  doc.setDrawColor(...rgb(C.gray));
+  doc.setFillColor(...rgb(C.white));
+  doc.setLineWidth(0.2);
+
+  // Clear background behind scissors
+  doc.rect(cx - 2.8 * s, cy - 4 * s, 5.6 * s, 8.5 * s, "F");
+
+  // Finger-hole handles (two circles)
+  doc.circle(cx - 1.3 * s, cy - 2.5 * s, 1 * s, "S");
+  doc.circle(cx + 1.3 * s, cy - 2.5 * s, 1 * s, "S");
+
+  // Blades (crossing lines pointing downward)
+  doc.line(cx - 1.3 * s, cy - 1.5 * s, cx + 1.2 * s, cy + 3.5 * s);
+  doc.line(cx + 1.3 * s, cy - 1.5 * s, cx - 1.2 * s, cy + 3.5 * s);
+}
+
 function drawCutLine(doc: jsPDF) {
   doc.setDrawColor(...rgb(C.gray));
   doc.setLineWidth(0.15);
   doc.setLineDashPattern([1.5, 1.5], 0);
   doc.line(HALF, 0, HALF, PH);
   doc.setLineDashPattern([], 0);
+
+  // Scissors icon just below the header
+  drawScissors(doc, HALF, HEADER_H + 2.5);
 }
 
 function drawOrderInfo(

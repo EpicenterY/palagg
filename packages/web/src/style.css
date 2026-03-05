@@ -1100,24 +1100,15 @@ footer ul {
   height: 1.15em;
 }
 
-/* "+" more button in emoji grid */
-.emoji-more-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  aspect-ratio: 1;
-  padding: 0;
-  border: 1.5px dashed var(--color-primary);
-  border-radius: var(--radius-sm);
-  background: var(--color-accent-light);
+/* "+" more button in emoji grid — key color highlight */
+.emoji-grid .emoji-more-btn {
+  border: 2.5px dashed var(--color-primary);
   color: var(--color-primary);
-  cursor: pointer;
   transition: background 0.15s, border-color 0.15s, transform 0.15s;
 }
 
-.emoji-more-btn:hover {
-  background: var(--color-accent);
+.emoji-grid .emoji-more-btn:hover {
+  background: var(--color-accent-light);
   border-color: var(--color-primary-hover);
   transform: scale(1.08);
 }
